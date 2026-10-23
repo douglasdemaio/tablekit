@@ -1,0 +1,156 @@
+package templates
+
+templ StaffPage(p Page) {
+	@Layout(p) {
+		<div class="flex flex-wrap items-end justify-between gap-4">
+			<div>
+				<h1 class="text-3xl font-semibold tracking-tight">{ p.T("staff.title") }</h1>
+				<p class="mt-2 text-stone-600">{ p.T("staff.subtitle") }</p>
+			</div>
+		</div>
+
+		if p.Error != "" {
+			<div class="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">{ p.Error }</div>
+		}
+
+		<section class="mt-8 rounded-2xl border border-stone-200 bg-white p-6">
+			<h2 class="text-lg font-semibold">{ p.T("staff.team_heading") }</h2>
+			if len(p.Staff) == 0 {
+				<p class="mt-3 text-sm text-stone-500">{ p.T("staff.empty") }</p>
+			} else {
+				<ul class="mt-4 divide-y divide-stone-100">
+					for _, u := range p.Staff {
+						<li class="py-4">
+							<form class="flex flex-wrap items-end gap-3" method="post" action={ templ.SafeURL("/dashboard/staff/" + u.ID) }>
+								<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+								<div class="flex min-w-0 flex-1 flex-col gap-1">
+									<label class="text-xs font-medium text-stone-500">{ p.T("staff.name") }</label>
+									<input class="min-w-0 rounded-lg border border-stone-300 px-3 py-2 text-sm" name="name" value={ u.Name } maxlength="120"/>
+								</div>
+								<div class="flex flex-col gap-1">
+									<label class="text-xs font-medium text-stone-500">{ p.T("staff.role") }</label>
+									<select class="rounded-lg border border-stone-300 px-3 py-2 text-sm" name="role">
+										@roleOption(p, "owner", u.Role)
+										@roleOption(p, "manager", u.Role)
+										@roleOption(p, "kitchen", u.Role)
+										@roleOption(p, "driver", u.Role)
+									</select>
+								</div>
+								<label class="flex items-center gap-2 pb-2 text-sm">
+									<input type="checkbox" name="mfa_required" value="1" checked disabled/>
+									<input type="hidden" name="mfa_required" value="1"/>
+									<span>{ p.T("staff.mfa_required") }</span>
+								</label>
+								<button class="rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100" type="submit">{ p.T("staff.save") }</button>
+							</form>
+
+							<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-stone-500">
+								<span>{ u.Email }</span>
+								<span>{ u.RoleLabel }</span>
+								if u.Disabled {
+									<span class="rounded-full bg-stone-200 px-2 py-0.5 font-medium text-stone-600">{ p.T("staff.disabled") }</span>
+								} else {
+									<span class="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800">{ p.T("staff.active") }</span>
+								}
+								if u.MFAEnabled {
+									<span class="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800">{ p.T("staff.mfa_on") }</span>
+								} else {
+									<span class="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">{ p.T("staff.mfa_off") }</span>
+								}
+							</div>
+
+							<div class="mt-3 flex flex-wrap items-end gap-3">
+								<form class="flex items-end gap-2" method="post" action={ templ.SafeURL("/dashboard/staff/" + u.ID + "/password") }>
+									<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+									<div class="flex flex-col gap-1">
+										<label class="text-xs font-medium text-stone-500">{ p.T("staff.new_password") }</label>
+										<input class="rounded-lg border border-stone-300 px-3 py-2 text-sm" type="password" name="password" minlength="12" autocomplete="new-password"/>
+									</div>
+									<button class="rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100" type="submit">{ p.T("staff.reset_password") }</button>
+								</form>
+								<form method="post" action={ templ.SafeURL("/dashboard/staff/" + u.ID + "/sessions/revoke") }>
+									<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+									<button class="rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100" type="submit">{ p.T("staff.sign_out_all") }</button>
+								</form>
+								if u.Disabled {
+									<form method="post" action={ templ.SafeURL("/dashboard/staff/" + u.ID + "/enable") }>
+										<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+										<button class="rounded-lg border border-emerald-300 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-50" type="submit">{ p.T("staff.enable") }</button>
+									</form>
+								} else if !u.IsSelf {
+									<form method="post" action={ templ.SafeURL("/dashboard/staff/" + u.ID + "/disable") }>
+										<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+										<button class="text-sm text-red-700 hover:underline" type="submit">{ p.T("staff.disable") }</button>
+									</form>
+								}
+							</div>
+						</li>
+					}
+				</ul>
+			}
+		</section>
+
+		<section class="mt-8 rounded-2xl border border-stone-200 bg-white p-6">
+			<h2 class="text-lg font-semibold">{ p.T("staff.add_heading") }</h2>
+			<form class="mt-4 grid gap-3 sm:grid-cols-2" method="post" action="/dashboard/staff">
+				<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+				<div class="flex flex-col gap-1">
+					<label class="text-xs font-medium text-stone-500">{ p.T("staff.name") }</label>
+					<input class="rounded-lg border border-stone-300 px-3 py-2 text-sm" name="name" maxlength="120" required/>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-xs font-medium text-stone-500">{ p.T("staff.email") }</label>
+					<input class="rounded-lg border border-stone-300 px-3 py-2 text-sm" type="email" name="email" required/>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-xs font-medium text-stone-500">{ p.T("staff.role") }</label>
+					<select class="rounded-lg border border-stone-300 px-3 py-2 text-sm" name="role">
+						@roleOption(p, "manager", "")
+						@roleOption(p, "kitchen", "")
+						@roleOption(p, "driver", "")
+					</select>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-xs font-medium text-stone-500">{ p.T("staff.password") }</label>
+					<input class="rounded-lg border border-stone-300 px-3 py-2 text-sm" type="password" name="password" minlength="12" autocomplete="new-password" required/>
+					<span class="text-xs text-stone-500">{ p.T("staff.password_hint") }</span>
+				</div>
+				<div class="sm:col-span-2">
+					<button class="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700" type="submit">{ p.T("staff.add") }</button>
+				</div>
+			</form>
+		</section>
+
+		<section class="mt-8 rounded-2xl border border-stone-200 bg-white p-6">
+			<h2 class="text-lg font-semibold">{ p.T("staff.sessions_heading") }</h2>
+			if len(p.TeamSessions) == 0 {
+				<p class="mt-3 text-sm text-stone-500">{ p.T("staff.sessions_empty") }</p>
+			} else {
+				<ul class="mt-4 divide-y divide-stone-100">
+					for _, s := range p.TeamSessions {
+						<li class="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+							<div class="min-w-0">
+								<div class="font-medium">
+									{ s.StaffName }
+									if s.Current {
+										<span class="ml-2 rounded-full bg-stone-200 px-2 py-0.5 text-xs text-stone-600">{ p.T("staff.current") }</span>
+									}
+								</div>
+								<div class="text-xs text-stone-500">{ s.Email } · { s.RoleLabel } · { s.IP }</div>
+								<div class="truncate text-xs text-stone-400">{ s.UserAgent }</div>
+							</div>
+							<form method="post" action={ templ.SafeURL("/dashboard/staff/sessions/" + s.ID + "/revoke") }>
+								<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+								<button class="rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100" type="submit">{ p.T("staff.sign_out") }</button>
+							</form>
+						</li>
+					}
+				</ul>
+			}
+		</section>
+	}
+}
+
+templ roleOption(p Page, value, current string) {
+	<option value={ value } selected?={ value == current }>{ p.T("role." + value) }</option>
+}

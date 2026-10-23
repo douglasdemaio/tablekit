@@ -1,0 +1,10 @@
+{
+  "name": "tablekit-web",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./static/css/input.css -o ./static/css/app.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}

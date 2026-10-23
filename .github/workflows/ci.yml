@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: tablekit
+          POSTGRES_USER: tablekit_owner
+          POSTGRES_PASSWORD: owner_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tablekit_owner -d tablekit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: owner_test_password
+      TABLEKIT_TEST_DATABASE_URL: postgres://tablekit_app:app_test_password@localhost:5432/tablekit?sslmode=disable
+      TABLEKIT_TEST_OWNER_DATABASE_URL: postgres://tablekit_owner:owner_test_password@localhost:5432/tablekit?sslmode=disable
+      TABLEKIT_DATABASE_URL: postgres://tablekit_owner:owner_test_password@localhost:5432/tablekit?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Create application role
+        run: |
+          psql -h localhost -U tablekit_owner -d tablekit -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE tablekit_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD 'app_test_password';
+          GRANT CONNECT ON DATABASE tablekit TO tablekit_app;
+          GRANT USAGE ON SCHEMA public TO tablekit_app;
+          SQL
+      - name: Run migrations
+        run: go run ./cmd/migrate up
+      - name: Install templ
+        run: go install github.com/a-h/templ/cmd/templ@latest
+      - name: Generate views
+        run: templ generate
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install templ
+        run: go install github.com/a-h/templ/cmd/templ@latest
+      - name: Generate views
+        run: templ generate
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+      - name: gosec
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet ./...
+      - name: gitleaks
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh -s -- -b /usr/local/bin
+          gitleaks detect --no-banner --redact

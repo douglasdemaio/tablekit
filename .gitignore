@@ -1,0 +1,24 @@
+# build output
+/bin/
+/dist/
+/tmp/
+*.test
+*.out
+
+# generated at build time
+/web/templates/*_templ.go
+/web/static/css/app.css
+/web/node_modules/
+/web/package-lock.json
+
+# local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# tooling
+.DS_Store
+.idea/
+.vscode/

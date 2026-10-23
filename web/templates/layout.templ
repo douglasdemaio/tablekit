@@ -1,0 +1,66 @@
+package templates
+
+templ Layout(p Page) {
+	<!DOCTYPE html>
+	<html lang={ p.Lang }>
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="csrf-token" content={ p.CSRFToken }/>
+			<title>{ p.Title } · tablekit</title>
+			<link rel="stylesheet" href="/static/css/app.css"/>
+			<link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml"/>
+			<script src="/static/js/auth.js" defer></script>
+			<script src="/static/js/storefront.js" defer></script>
+		</head>
+		<body class="min-h-screen bg-stone-50 text-stone-900 antialiased">
+			<header class="border-b border-stone-200 bg-white">
+				<div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
+					<a href="/" class="flex items-baseline gap-2">
+						<span class="text-xl font-semibold tracking-tight">tablekit</span>
+						if p.MerchantName != "" {
+							<span class="text-sm text-stone-500">{ p.MerchantName }</span>
+						}
+					</a>
+					if p.SignedIn {
+						<nav class="flex items-center gap-4 text-sm">
+							<a class={ navClass(p.Nav == "dashboard") } href="/dashboard">{ p.T("nav.dashboard") }</a>
+							<a class={ navClass(p.Nav == "orders") } href="/dashboard/orders">{ p.T("nav.orders") }</a>
+							<a class={ navClass(p.Nav == "menu") } href="/dashboard/menu">{ p.T("nav.menu") }</a>
+							if p.CanStaff {
+								<a class={ navClass(p.Nav == "staff") } href="/dashboard/staff">{ p.T("nav.staff") }</a>
+							}
+							if p.CanSettings {
+								<a class={ navClass(p.Nav == "settings") } href="/dashboard/settings">{ p.T("nav.settings") }</a>
+							}
+							<a class={ navClass(p.Nav == "security") } href="/dashboard/security">{ p.T("nav.security") }</a>
+							<form method="post" action="/logout">
+								<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+								<button class="rounded-md border border-stone-300 px-3 py-1.5 hover:bg-stone-100" type="submit">{ p.T("nav.logout") }</button>
+							</form>
+						</nav>
+					}
+				</div>
+			</header>
+			<main class="mx-auto max-w-5xl px-4 py-10">
+				if p.Error != "" {
+					<div class="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">{ p.Error }</div>
+				}
+				if p.Notice != "" {
+					<div class="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800" role="status">{ p.Notice }</div>
+				}
+				{ children... }
+			</main>
+			<footer class="mx-auto max-w-5xl px-4 pb-10 text-xs text-stone-500">
+				<p>{ p.T("footer.tagline") }</p>
+			</footer>
+		</body>
+	</html>
+}
+
+func navClass(active bool) string {
+	if active {
+		return "font-medium text-stone-900"
+	}
+	return "text-stone-500 hover:text-stone-900"
+}

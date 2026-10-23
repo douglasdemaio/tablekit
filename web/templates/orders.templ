@@ -1,0 +1,90 @@
+package templates
+
+templ OrdersPage(p Page) {
+	@Layout(p) {
+		<div class="flex flex-wrap items-end justify-between gap-4">
+			<div>
+				<h1 class="text-3xl font-semibold tracking-tight">{ p.T("orders.title") }</h1>
+				<p class="mt-2 text-stone-600">{ p.T("orders.subtitle") }</p>
+			</div>
+		</div>
+
+		if len(p.Orders) == 0 {
+			<div class="mt-10 rounded-2xl border border-dashed border-stone-300 bg-white p-10 text-center text-stone-500">
+				{ p.T("orders.empty") }
+			</div>
+		} else {
+			<div class="mt-8 space-y-4">
+				for _, o := range p.Orders {
+					<article class="rounded-2xl border border-stone-200 bg-white p-6">
+						<div class="flex flex-wrap items-start justify-between gap-4">
+							<div>
+								<div class="flex items-center gap-3">
+									<h2 class="text-lg font-semibold">{ o.Ref }</h2>
+									@StatusBadge(o.StatusLabel)
+								</div>
+								<p class="mt-1 text-sm text-stone-500">
+									{ p.T("orders.placed") }: { o.Placed } · { o.Fulfilment } · { o.Payment }
+								</p>
+								if o.Customer != "" {
+									<p class="mt-1 text-sm text-stone-600">{ p.T("orders.customer") }: { o.Customer }</p>
+								}
+							</div>
+							<p class="text-lg font-semibold">{ o.Total }</p>
+						</div>
+
+						<ul class="mt-4 divide-y divide-stone-100 border-t border-stone-100">
+							for _, item := range o.Items {
+								<li class="flex items-center justify-between py-2 text-sm">
+									<span><span class="font-medium">{ item.Quantity }×</span> { item.Name }</span>
+									<span class="text-stone-500">{ item.Total }</span>
+								</li>
+							}
+						</ul>
+
+						if o.Notes != "" {
+							<p class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">{ p.T("orders.notes") }: { o.Notes }</p>
+						}
+
+						if o.CanHandoff {
+							<form method="post" action={ templ.SafeURL("/dashboard/orders/" + o.ID + "/handoff") } class="mt-5 flex flex-wrap items-end gap-2 rounded-lg bg-amber-50 p-3">
+								<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+								<div>
+									<label class="block text-sm font-medium text-amber-900" for={ "code_" + o.ID }>{ p.T("orders.pickup_code") }</label>
+									<input id={ "code_" + o.ID } name="code" required maxlength="6" autocomplete="off"
+										class="mt-1 w-36 rounded-lg border border-amber-300 px-3 py-2 font-mono uppercase tracking-widest"/>
+								</div>
+								<button type="submit" class="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700">{ p.T("orders.verify_pickup") }</button>
+							</form>
+						}
+
+						<div class="mt-5 flex flex-wrap gap-2">
+							for _, a := range o.Actions {
+								<form method="post" action={ templ.SafeURL("/dashboard/orders/" + o.ID + "/status") }>
+									<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+									<input type="hidden" name="to" value={ a.Key }/>
+									<button class={ actionClass(a.Style) } type="submit">{ a.Label }</button>
+								</form>
+							}
+						</div>
+					</article>
+				}
+			</div>
+		}
+	}
+}
+
+templ StatusBadge(label string) {
+	<span class="rounded-full bg-stone-100 px-2.5 py-0.5 text-xs font-medium text-stone-700">{ label }</span>
+}
+
+func actionClass(style string) string {
+	switch style {
+	case "primary":
+		return "rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700"
+	case "danger":
+		return "rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+	default:
+		return "rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium hover:bg-stone-100"
+	}
+}

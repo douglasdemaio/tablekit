@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --tk-primary: #1f2937;
+    --tk-accent: #f59e0b;
+  }
+  html {
+    color-scheme: light;
+  }
+}

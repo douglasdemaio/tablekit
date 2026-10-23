@@ -1,0 +1,82 @@
+name: tablekit
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: tablekit
+      POSTGRES_USER: tablekit_owner
+      POSTGRES_PASSWORD: ${TABLEKIT_OWNER_PASSWORD:?set TABLEKIT_OWNER_PASSWORD}
+      TABLEKIT_APP_PASSWORD: ${TABLEKIT_APP_PASSWORD:?set TABLEKIT_APP_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/10-app-role.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tablekit_owner -d tablekit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    entrypoint: ["/app/tablekit-migrate"]
+    command: ["up"]
+    environment:
+      TABLEKIT_DATABASE_URL: postgres://tablekit_owner:${TABLEKIT_OWNER_PASSWORD}@db:5432/tablekit?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: .
+    environment:
+      TABLEKIT_ENV: ${TABLEKIT_ENV:-production}
+      TABLEKIT_HTTP_ADDR: :8080
+      TABLEKIT_BASE_DOMAIN: ${TABLEKIT_BASE_DOMAIN:?set TABLEKIT_BASE_DOMAIN}
+      TABLEKIT_PUBLIC_SCHEME: https
+      TABLEKIT_DATABASE_URL: postgres://tablekit_app:${TABLEKIT_APP_PASSWORD}@db:5432/tablekit?sslmode=disable
+      TABLEKIT_MIGRATE_DATABASE_URL: postgres://tablekit_owner:${TABLEKIT_OWNER_PASSWORD}@db:5432/tablekit?sslmode=disable
+      TABLEKIT_ENCRYPTION_KEY: ${TABLEKIT_ENCRYPTION_KEY:?set TABLEKIT_ENCRYPTION_KEY}
+      TABLEKIT_WEBAUTHN_RP_ID: ${TABLEKIT_WEBAUTHN_RP_ID:?set TABLEKIT_WEBAUTHN_RP_ID}
+      TABLEKIT_WEBAUTHN_RP_NAME: tablekit
+      TABLEKIT_WEBAUTHN_ORIGINS: ${TABLEKIT_WEBAUTHN_ORIGINS:?set TABLEKIT_WEBAUTHN_ORIGINS}
+      TABLEKIT_COOKIE_SECURE: "true"
+      TABLEKIT_TRUST_PROXY: "true"
+      TABLEKIT_S3_ENDPOINT: minio:9000
+      TABLEKIT_S3_REGION: us-east-1
+      TABLEKIT_S3_BUCKET: ${TABLEKIT_S3_BUCKET:-tablekit-media}
+      TABLEKIT_S3_ACCESS_KEY: ${TABLEKIT_S3_ACCESS_KEY:-minioadmin}
+      TABLEKIT_S3_SECRET_KEY: ${TABLEKIT_S3_SECRET_KEY:-minioadmin}
+      TABLEKIT_S3_USE_SSL: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  minio-data:
