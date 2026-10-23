@@ -4,7 +4,7 @@ Open-source (MIT) ordering platform for independent restaurants. Guests order
 directly from the restaurant; tablekit never touches the money. Payment for
 card orders flows through the restaurant's own payment provider account.
 
-Status: Milestone 2A (guest storefront, cart, checkout, pickup handoff).
+Status: Milestone 3 (accounts, staff personas, branding, delivery and card payments).
 
 ## Design rules
 
@@ -51,6 +51,30 @@ echo '127.0.0.1 bamberg-test.tk.local' | sudo tee -a /etc/hosts
 Set `TABLEKIT_BASE_DOMAIN=tk.local` for local development. The apex
 (`tk.local`) and `www.tk.local` are reserved for the platform; tenants live on
 their own subdomains. Owners must complete MFA setup on first login.
+
+## Logging in
+
+Staff log in at the tenant URL, for example:
+
+```text
+http://bamberg-test.tk.local:8080/login
+```
+
+The development credentials created by `make bootstrap` come from `.env.example`:
+
+```text
+Email:    owner@example.com
+Password: devpassword123
+```
+
+On the first login the owner is sent to `/setup/mfa`. Scan the QR code with an
+authenticator app, enter the 6-digit code to finish setup, and use that code on
+later logins. Change `TABLEKIT_BOOTSTRAP_PASSWORD` before bootstrapping anything
+other than local development.
+
+Customers use a separate login at `/account/login`: they enter their email
+address and receive a one-time sign-in code. In local development, if SMTP is
+not configured, the code is written to the server log.
 
 ## Container deployment
 
