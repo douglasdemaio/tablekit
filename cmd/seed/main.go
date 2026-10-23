@@ -58,6 +58,28 @@ func seed(ctx context.Context, store *db.Store, slug string) error {
 			return err
 		}
 
+		for weekday := 0; weekday <= 6; weekday++ {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO opening_hours (merchant_id, weekday, opens, closes)
+				SELECT $1, $2, '11:00', '22:00'
+				WHERE NOT EXISTS (
+					SELECT 1 FROM opening_hours WHERE merchant_id = $1 AND weekday = $2
+				)`, merchantID, weekday); err != nil {
+				return err
+			}
+		}
+		var zones int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM delivery_zones WHERE merchant_id = $1`, merchantID).Scan(&zones); err != nil {
+			return err
+		}
+		if zones == 0 {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO delivery_zones (merchant_id, name, postcode_prefixes, min_order_minor, delivery_fee_minor)
+				VALUES ($1, 'Bamberg', ARRAY['96'], 1500, 300)`, merchantID); err != nil {
+				return err
+			}
+		}
+
 		var existing int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM menu_items WHERE merchant_id = $1`, merchantID).Scan(&existing); err != nil {
 			return err
