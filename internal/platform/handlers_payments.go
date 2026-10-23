@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +50,10 @@ func (s *Server) createStripeCheckout(r *http.Request, m tenant.Merchant, cid cu
 	}
 	if err := s.storefrontSvc.CreatePaymentRecord(r.Context(), m.ID, placed.ID, session.ID, placed.Total, placed.Currency); err != nil {
 		return "", err
+	}
+	u, err := url.Parse(session.URL)
+	if err != nil || u.Scheme != "https" || u.Host != "checkout.stripe.com" {
+		return "", storefront.ErrCardUnavailable
 	}
 	return session.URL, nil
 }

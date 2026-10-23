@@ -147,9 +147,9 @@ func VerifyPassword(password, encoded string) (bool, error) {
 		return false, ErrInvalidHash
 	}
 	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(want) == 0 {
+	if err != nil || len(want) == 0 || len(want) > 1024 {
 		return false, ErrInvalidHash
 	}
-	got := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, uint32(len(want)))
+	got := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, uint32(len(want))) // #nosec G115 -- length is bounded above
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }

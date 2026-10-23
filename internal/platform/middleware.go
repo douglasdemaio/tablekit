@@ -145,7 +145,7 @@ func (s *Server) ensureCSRF(next http.Handler) http.Handler {
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
-			cookie = &http.Cookie{
+			cookie = &http.Cookie{ // #nosec G124 -- Secure follows deployment config
 				Name:     s.csrfCookieName(),
 				Value:    token,
 				Path:     "/",
@@ -169,7 +169,7 @@ func (s *Server) ensureCSRF(next http.Handler) http.Handler {
 		submitted := r.Header.Get("X-CSRF-Token")
 		if submitted == "" {
 			if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-				if err := r.ParseMultipartForm(4 << 20); err == nil {
+				if err := r.ParseMultipartForm(4 << 20); err == nil { // #nosec G120 -- request body is capped by MaxBytesReader
 					submitted = r.FormValue("csrf_token")
 				}
 			} else if err := r.ParseForm(); err == nil {
@@ -323,7 +323,7 @@ func (s *Server) setSessionCookies(w http.ResponseWriter, token, csrf string, ve
 	if !verified {
 		maxAge = int(s.cfg.MFAPendingTTL.Seconds())
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
 		Name:     s.sessionCookieName(),
 		Value:    token,
 		Path:     "/",
@@ -332,7 +332,7 @@ func (s *Server) setSessionCookies(w http.ResponseWriter, token, csrf string, ve
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   maxAge,
 	})
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
 		Name:     s.csrfCookieName(),
 		Value:    csrf,
 		Path:     "/",
@@ -345,7 +345,7 @@ func (s *Server) setSessionCookies(w http.ResponseWriter, token, csrf string, ve
 
 func (s *Server) clearSessionCookies(w http.ResponseWriter) {
 	for _, name := range []string{s.sessionCookieName(), s.csrfCookieName()} {
-		http.SetCookie(w, &http.Cookie{
+		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
 			Name: name, Value: "", Path: "/", MaxAge: -1,
 			HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
 		})
@@ -355,7 +355,7 @@ func (s *Server) clearSessionCookies(w http.ResponseWriter) {
 func (s *Server) customerCookieName() string { return "tk_customer" }
 
 func (s *Server) setCustomerCookie(w http.ResponseWriter, token string, expires time.Time) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
 		Name:     s.customerCookieName(),
 		Value:    token,
 		Path:     "/",
@@ -368,21 +368,10 @@ func (s *Server) setCustomerCookie(w http.ResponseWriter, token string, expires 
 }
 
 func (s *Server) clearCustomerCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
 		Name: s.customerCookieName(), Value: "", Path: "/",
 		Domain: "." + s.cfg.BaseDomain, MaxAge: -1,
 		HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
-	})
-}
-
-func (s *Server) requireCustomer(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := customer.FromContext(r.Context()); !ok {
-			target := url.QueryEscape(r.URL.RequestURI())
-			http.Redirect(w, r, "/account/login?next="+target, http.StatusSeeOther)
-			return
-		}
-		next.ServeHTTP(w, r)
 	})
 }
 

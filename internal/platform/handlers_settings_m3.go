@@ -191,7 +191,7 @@ func (s *Server) handleBrandUpload(w http.ResponseWriter, r *http.Request, kind 
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, mediaUploadRequestLimit)
-	if err := r.ParseMultipartForm(4 << 20); err != nil {
+	if err := r.ParseMultipartForm(4 << 20); err != nil { // #nosec G120 -- request body is capped by MaxBytesReader
 		http.Redirect(w, r, "/dashboard/settings?error=branding", http.StatusSeeOther)
 		return
 	}

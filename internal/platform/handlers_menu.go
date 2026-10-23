@@ -99,7 +99,7 @@ func (s *Server) handleMenuUploadImage(w http.ResponseWriter, r *http.Request) {
 	// Cap the request body slightly above the media limit so oversized
 	// multipart frames are rejected before hitting disk/memory.
 	r.Body = http.MaxBytesReader(w, r.Body, mediaUploadRequestLimit)
-	if err := r.ParseMultipartForm(4 << 20); err != nil {
+	if err := r.ParseMultipartForm(4 << 20); err != nil { // #nosec G120 -- request body is capped by MaxBytesReader
 		s.renderMenuError(w, r, "menu.error.image")
 		return
 	}

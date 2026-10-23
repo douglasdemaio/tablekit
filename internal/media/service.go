@@ -12,6 +12,7 @@ import (
 	"image"
 	"image/jpeg"
 	"io"
+	"math"
 
 	"github.com/google/uuid"
 	xdraw "golang.org/x/image/draw"
@@ -116,13 +117,16 @@ func (s *Service) Upload(ctx context.Context, merchantID, staffID uuid.UUID, kin
 		Height:    bounds.Dy(),
 	}
 	err = s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		if bounds.Dx() > math.MaxInt32 || bounds.Dy() > math.MaxInt32 {
+			return fmt.Errorf("image dimensions too large")
+		}
 		row, err := q.CreateMediaAsset(ctx, sqlcgen.CreateMediaAssetParams{
 			Column1: merchantID,
 			Column2: kind,
 			Column3: key,
 			Column4: "image/jpeg",
-			Column5: int32(bounds.Dx()),
-			Column6: int32(bounds.Dy()),
+			Column5: int32(bounds.Dx()), // #nosec G115 -- checked above
+			Column6: int32(bounds.Dy()), // #nosec G115 -- checked above
 			Column7: int64(main.Len()),
 			Column8: sum[:],
 			Column9: staffID,

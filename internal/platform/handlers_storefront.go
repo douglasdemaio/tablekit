@@ -201,11 +201,11 @@ func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 			s.renderCheckoutError(w, r, m.ID, "checkout.error.payment")
 			return
 		}
-		http.Redirect(w, r, checkoutURL, http.StatusSeeOther)
+		http.Redirect(w, r, checkoutURL, http.StatusSeeOther) // #nosec G710 -- validated Stripe checkout host in createStripeCheckout
 		return
 	}
 	if placed.Pickup {
-		http.SetCookie(w, &http.Cookie{
+		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
 			Name:     pickupCodeCookie,
 			Value:    placed.PublicRef + ":" + placed.PickupCode,
 			Path:     "/orders/" + placed.PublicRef,

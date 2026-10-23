@@ -1,7 +1,7 @@
 package i18n
 
 // en is the source of truth for user-facing copy. Other locales fall back here.
-var en = map[string]string{
+var en = map[string]string{ // #nosec G101 -- user-facing translation strings, not credentials
 	// Shared / layout
 	"app.name":                 "tablekit",
 	"nav.dashboard":            "Dashboard",

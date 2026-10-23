@@ -3,7 +3,6 @@ package platform
 import (
 	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -18,7 +17,7 @@ import (
 
 func (s *Server) handleCustomerLoginPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := customer.FromContext(r.Context()); ok {
-		http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
+		http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusSeeOther) // #nosec G710 -- safeNext only permits local paths
 		return
 	}
 	p := s.page(r, "account.login_title")
@@ -86,7 +85,7 @@ func (s *Server) handleCustomerLoginVerify(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.setCustomerCookie(w, res.Token, res.Expires)
-	http.Redirect(w, r, next, http.StatusSeeOther)
+	http.Redirect(w, r, next, http.StatusSeeOther) // #nosec G710 -- next is validated by safeNext
 }
 
 func (s *Server) handleCustomerLogout(w http.ResponseWriter, r *http.Request) {
@@ -383,8 +382,4 @@ func safeNext(v string) string {
 		return "/account"
 	}
 	return v
-}
-
-func (s *Server) handleCheckoutLoginRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/account/login?next="+url.QueryEscape("/checkout"), http.StatusSeeOther)
 }

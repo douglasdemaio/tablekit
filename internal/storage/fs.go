@@ -31,25 +31,25 @@ func (f *FS) Put(_ context.Context, key, _ string, body io.Reader, _ int64) (Obj
 	if err != nil {
 		return Object{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		return Object{}, fmt.Errorf("storage: mkdir: %w", err)
 	}
 	tmp := p + ".tmp"
-	file, err := os.Create(tmp)
+	file, err := os.Create(tmp) // #nosec G304 -- key is server-generated and cleaned by path()
 	if err != nil {
 		return Object{}, fmt.Errorf("storage: create: %w", err)
 	}
 	if _, err := io.Copy(file, body); err != nil {
-		file.Close()
-		os.Remove(tmp)
+		_ = file.Close()
+		_ = os.Remove(tmp)
 		return Object{}, fmt.Errorf("storage: write: %w", err)
 	}
 	if err := file.Close(); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return Object{}, err
 	}
 	if err := os.Rename(tmp, p); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return Object{}, fmt.Errorf("storage: rename: %w", err)
 	}
 	return Object{Key: key, URL: f.URL(key)}, nil

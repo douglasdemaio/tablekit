@@ -411,14 +411,17 @@ func (s *Service) PlaceOrder(ctx context.Context, merchantID uuid.UUID, in Order
 			return err
 		}
 		for _, l := range lines {
+			if l.qty < 1 || l.qty > MaxQuantityPerItem {
+				return ErrInvalidInput
+			}
 			if err := q.InsertGuestOrderItem(ctx, sqlcgen.InsertGuestOrderItemParams{
 				Column1: merchantID,
 				Column2: row.ID,
 				Column3: l.item.ID,
 				Column4: l.item.Name,
 				Column5: l.item.PriceMinor,
-				Column6: int32(l.qty),
-				Column7: l.item.PriceMinor * int32(l.qty),
+				Column6: int32(l.qty),                     // #nosec G115 -- bounded by MaxQuantityPerItem
+				Column7: l.item.PriceMinor * int32(l.qty), // #nosec G115 -- bounded by MaxQuantityPerItem
 			}); err != nil {
 				return err
 			}
@@ -1005,7 +1008,7 @@ func IncludedTax(grossMinor, rateBp int32) int32 {
 		return 0
 	}
 	denom := int64(10000 + rateBp)
-	return int32((int64(grossMinor)*int64(rateBp) + denom/2) / denom)
+	return int32((int64(grossMinor)*int64(rateBp) + denom/2) / denom) // #nosec G115 -- gross is int32 and VAT rate is basis points
 }
 
 func mergeLines(lines []CartLine) []CartLine {

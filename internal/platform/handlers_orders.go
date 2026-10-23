@@ -100,7 +100,7 @@ func (s *Server) handleOrderStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, id.Merchant.ID, "staff", &id.Staff.ID, "order.status_changed", "order", orderID.String(), s.clientIP(r), map[string]any{"to": string(to)})
-	http.Redirect(w, r, "/dashboard/orders?updated="+orderID.String(), http.StatusSeeOther)
+	http.Redirect(w, r, "/dashboard/orders?updated="+orderID.String(), http.StatusSeeOther) // #nosec G710 -- fixed local path with UUID
 }
 
 func placedAt(o sqlcgen.Order) pgtype.Timestamptz {

@@ -1,7 +1,7 @@
 package i18n
 
 // de is a partial German catalog. Any missing key falls back to English.
-var de = map[string]string{
+var de = map[string]string{ // #nosec G101 -- user-facing translation strings, not credentials
 	// Shared / layout
 	"nav.dashboard":            "Übersicht",
 	"nav.orders":               "Bestellungen",
