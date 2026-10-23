@@ -75,8 +75,12 @@ func TestPlaceOrderAndHandoff(t *testing.T) {
 	ctx := context.Background()
 	merchantID := seedMerchant(t, ownerStore)
 
-	var itemID uuid.UUID
+	var itemID, customerID uuid.UUID
 	err := ownerStore.WithOwner(ctx, func(tx pgx.Tx, _ *sqlcgen.Queries) error {
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO customer_accounts (email, name) VALUES ('ada-' || gen_random_uuid() || '@example.com', 'Ada') RETURNING id`).Scan(&customerID); err != nil {
+			return err
+		}
 		var categoryID uuid.UUID
 		if err := tx.QueryRow(ctx,
 			`INSERT INTO menu_categories (merchant_id, name) VALUES ($1, 'Mains') RETURNING id`,
@@ -110,6 +114,7 @@ func TestPlaceOrderAndHandoff(t *testing.T) {
 	}
 
 	placed, err := svc.PlaceOrder(ctx, merchantID, OrderInput{
+		CustomerID: customerID,
 		Name:       "Ada",
 		Fulfilment: sqlcgen.FulfilmentModePickup,
 		Lines:      []CartLine{{ItemID: itemID, Quantity: 2}},
@@ -160,8 +165,12 @@ func TestPlaceOrderRejectsDeliveryOutsideZone(t *testing.T) {
 	appStore, ownerStore := testStores(t)
 	ctx := context.Background()
 	merchantID := seedMerchant(t, ownerStore)
-	var itemID uuid.UUID
+	var itemID, customerID uuid.UUID
 	err := ownerStore.WithOwner(ctx, func(tx pgx.Tx, _ *sqlcgen.Queries) error {
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO customer_accounts (email, name) VALUES ('ada-' || gen_random_uuid() || '@example.com', 'Ada') RETURNING id`).Scan(&customerID); err != nil {
+			return err
+		}
 		var categoryID uuid.UUID
 		if err := tx.QueryRow(ctx,
 			`INSERT INTO menu_categories (merchant_id, name) VALUES ($1, 'Mains') RETURNING id`,
@@ -178,11 +187,13 @@ func TestPlaceOrderRejectsDeliveryOutsideZone(t *testing.T) {
 	}
 	svc := NewService(appStore)
 	_, err = svc.PlaceOrder(ctx, merchantID, OrderInput{
+		CustomerID: uuid.New(),
 		Name:       "Ada",
 		Fulfilment: sqlcgen.FulfilmentModeSelfDelivery,
-		Postcode:   "10115",
-		Address:    "Teststr. 1",
-		Lines:      []CartLine{{ItemID: itemID, Quantity: 1}},
+		Address: DeliveryAddress{
+			Recipient: "Ada", Phone: "0170", Line1: "Teststr. 1", Postcode: "10115", City: "Berlin",
+		},
+		Lines: []CartLine{{ItemID: itemID, Quantity: 1}},
 	})
 	if !errors.Is(err, ErrDeliveryUnavailable) {
 		t.Fatalf("expected ErrDeliveryUnavailable, got %v", err)
@@ -226,4 +237,18 @@ func seedMerchant(t *testing.T, owner *db.Store) uuid.UUID {
 		t.Fatalf("seed merchant: %v", err)
 	}
 	return id
+}
+
+func TestBrandDefaultsWithoutRow(t *testing.T) {
+	appStore, ownerStore := testStores(t)
+	ctx := context.Background()
+	merchantID := seedMerchant(t, ownerStore)
+	svc := NewService(appStore)
+	b, err := svc.Brand(ctx, merchantID)
+	if err != nil {
+		t.Fatalf("brand defaults: %v", err)
+	}
+	if b.Template != "classic-bistro" || b.Font == "" || b.Primary == "" {
+		t.Fatalf("unexpected defaults: %+v", b)
+	}
 }

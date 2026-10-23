@@ -9,6 +9,7 @@ templ Layout(p Page) {
 			<meta name="csrf-token" content={ p.CSRFToken }/>
 			<title>{ p.Title } · tablekit</title>
 			<link rel="stylesheet" href="/static/css/app.css"/>
+			<link rel="stylesheet" href="/theme.css"/>
 			<link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml"/>
 			<script src="/static/js/auth.js" defer></script>
 			<script src="/static/js/storefront.js" defer></script>
@@ -23,21 +24,47 @@ templ Layout(p Page) {
 						}
 					</a>
 					if p.SignedIn {
-						<nav class="flex items-center gap-4 text-sm">
-							<a class={ navClass(p.Nav == "dashboard") } href="/dashboard">{ p.T("nav.dashboard") }</a>
-							<a class={ navClass(p.Nav == "orders") } href="/dashboard/orders">{ p.T("nav.orders") }</a>
-							<a class={ navClass(p.Nav == "menu") } href="/dashboard/menu">{ p.T("nav.menu") }</a>
+						<nav class="flex flex-wrap items-center gap-3 text-sm">
+							if p.CanOrders {
+								<a class={ navClass(p.Nav == "dashboard") } href="/dashboard">{ p.T("nav.dashboard") }</a>
+							}
+							if p.CanOrders || p.CanDelivery {
+								<a class={ navClass(p.Nav == "orders") } href="/dashboard/orders">{ p.T("nav.orders") }</a>
+							}
+							if p.CanMenu {
+								<a class={ navClass(p.Nav == "menu") } href="/dashboard/menu">{ p.T("nav.menu") }</a>
+							}
 							if p.CanStaff {
 								<a class={ navClass(p.Nav == "staff") } href="/dashboard/staff">{ p.T("nav.staff") }</a>
 							}
 							if p.CanSettings {
 								<a class={ navClass(p.Nav == "settings") } href="/dashboard/settings">{ p.T("nav.settings") }</a>
 							}
-							<a class={ navClass(p.Nav == "security") } href="/dashboard/security">{ p.T("nav.security") }</a>
+							if p.CanSecurity {
+								<a class={ navClass(p.Nav == "security") } href="/dashboard/security">{ p.T("nav.security") }</a>
+							}
+							<a class="text-stone-500 hover:text-stone-900" href="/">{ p.T("nav.storefront") }</a>
+							if p.CustomerSignedIn {
+								<a class="text-stone-500 hover:text-stone-900" href="/account">{ p.CustomerName }</a>
+							}
 							<form method="post" action="/logout">
 								<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
 								<button class="rounded-md border border-stone-300 px-3 py-1.5 hover:bg-stone-100" type="submit">{ p.T("nav.logout") }</button>
 							</form>
+						</nav>
+					} else if p.CustomerSignedIn {
+						<nav class="flex flex-wrap items-center gap-3 text-sm">
+							<a class={ navClass(p.Nav == "storefront") } href="/">{ p.T("nav.menu") }</a>
+							<a class={ navClass(p.Nav == "account") } href="/account/orders">{ p.T("account.my_orders") }</a>
+							<a class={ navClass(p.Nav == "account") } href="/account">{ p.CustomerName }</a>
+							<form method="post" action="/account/logout">
+								<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+								<button class="rounded-md border border-stone-300 px-3 py-1.5 hover:bg-stone-100" type="submit">{ p.T("nav.logout") }</button>
+							</form>
+						</nav>
+					} else {
+						<nav class="text-sm">
+							<a class="text-stone-500 hover:text-stone-900" href="/account/login">{ p.T("nav.sign_in") }</a>
 						</nav>
 					}
 				</div>

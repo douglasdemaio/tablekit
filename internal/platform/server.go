@@ -13,7 +13,9 @@ import (
 	"tablekit.de/tablekit/internal/auth"
 	"tablekit.de/tablekit/internal/config"
 	"tablekit.de/tablekit/internal/crypto"
+	"tablekit.de/tablekit/internal/customer"
 	"tablekit.de/tablekit/internal/db"
+	"tablekit.de/tablekit/internal/email"
 	"tablekit.de/tablekit/internal/media"
 	"tablekit.de/tablekit/internal/menu"
 	"tablekit.de/tablekit/internal/orders"
@@ -36,6 +38,7 @@ type Server struct {
 	staffSvc      *staff.Service
 	mediaSvc      *media.Service
 	storefrontSvc *storefront.Service
+	customerSvc   *customer.Service
 	handler       http.Handler
 }
 
@@ -47,6 +50,10 @@ func New(cfg *config.Config, log *slog.Logger, store *db.Store, sealer *crypto.S
 	})
 	if err != nil {
 		return nil, fmt.Errorf("configure webauthn: %w", err)
+	}
+	mailer := email.New(cfg, log)
+	if !mailer.Configured() {
+		log.Warn("SMTP not configured; customer login codes are logged in development")
 	}
 	s := &Server{
 		cfg:           cfg,
@@ -60,6 +67,7 @@ func New(cfg *config.Config, log *slog.Logger, store *db.Store, sealer *crypto.S
 		staffSvc:      staff.NewService(store),
 		mediaSvc:      media.NewService(store, storage.New(cfg)),
 		storefrontSvc: storefront.NewService(store),
+		customerSvc:   customer.NewService(store, mailer, log, cfg.CustomerSessionTTL),
 	}
 	if !cfg.StorageEnabled() {
 		log.Warn("media storage not configured; image uploads are disabled")
@@ -102,6 +110,23 @@ func (s *Server) routes() http.Handler {
 		r.Get("/checkout", s.handleCheckoutPage)
 		r.Post("/orders", s.handlePlaceOrder)
 		r.Get("/orders/{ref}", s.handleOrderConfirmation)
+		r.Post("/webhooks/stripe", s.handleStripeWebhook)
+
+		r.Get("/theme.css", s.handleThemeCSS)
+
+		r.Get("/account/login", s.handleCustomerLoginPage)
+		r.Post("/account/login", s.handleCustomerLoginRequest)
+		r.Post("/account/login/verify", s.handleCustomerLoginVerify)
+		r.Post("/account/logout", s.handleCustomerLogout)
+		r.Get("/account", s.handleAccountPage)
+		r.Post("/account/profile", s.handleAccountProfile)
+		r.Get("/account/orders", s.handleAccountOrders)
+		r.Get("/account/orders/{ref}", s.handleAccountOrder)
+		r.Post("/account/addresses", s.handleAccountAddressCreate)
+		r.Post("/account/addresses/{id}", s.handleAccountAddressUpdate)
+		r.Post("/account/addresses/{id}/delete", s.handleAccountAddressDelete)
+		r.Post("/account/addresses/{id}/default", s.handleAccountAddressDefault)
+		r.Post("/account/shares/{merchant}/revoke", s.handleAccountShareRevoke)
 
 		r.Get("/login", s.handleLoginPage)
 		r.Post("/login", s.handleLogin)
@@ -119,12 +144,17 @@ func (s *Server) routes() http.Handler {
 		r.With(s.requireVerified).Get("/dashboard", s.handleDashboard)
 		r.With(s.requirePermission(auth.PermOrdersView)).Get("/dashboard/orders", s.handleOrdersPage)
 		r.With(s.requirePermission(auth.PermOrdersManage)).Post("/dashboard/orders/{id}/status", s.handleOrderStatus)
-		r.With(s.requirePermission(auth.PermOrdersManage)).Post("/dashboard/orders/{id}/handoff", s.handleOrderHandoff)
+		r.With(s.requireAnyPermission(auth.PermOrdersManage, auth.PermDelivery)).Post("/dashboard/orders/{id}/handoff", s.handleOrderHandoff)
+		r.With(s.requirePermission(auth.PermOrdersManage)).Post("/dashboard/orders/{id}/assign", s.handleDeliveryAssign)
+		r.With(s.requirePermission(auth.PermDelivery)).Post("/dashboard/orders/{id}/claim", s.handleDeliveryClaim)
+		r.With(s.requirePermission(auth.PermDelivery)).Post("/dashboard/orders/{id}/release", s.handleDeliveryRelease)
 		r.With(s.requirePermission(auth.PermMenuManage)).Get("/dashboard/menu", s.handleMenuPage)
 		r.With(s.requirePermission(auth.PermMenuManage)).Post("/dashboard/menu/categories", s.handleMenuCreateCategory)
 		r.With(s.requirePermission(auth.PermMenuManage)).Post("/dashboard/menu/categories/{id}/items", s.handleMenuCreateItem)
 		r.With(s.requirePermission(auth.PermMenuManage)).Post("/dashboard/menu/items/{id}", s.handleMenuUpdateItem)
 		r.With(s.requirePermission(auth.PermMenuManage)).Post("/dashboard/menu/items/{id}/availability", s.handleMenuToggleAvailability)
+		r.With(s.requirePermission(auth.PermMenuManage)).Post("/dashboard/menu/items/{id}/sold-out", s.handleMenuSoldOut)
+		r.With(s.requirePermission(auth.PermMenuManage)).Post("/dashboard/menu/items/{id}/sold-out/clear", s.handleMenuSoldOutClear)
 		r.With(s.requirePermission(auth.PermMenuManage)).Post("/dashboard/menu/items/{id}/delete", s.handleMenuDeleteItem)
 		r.With(s.requirePermission(auth.PermMenuManage)).Post("/dashboard/menu/items/{id}/image", s.handleMenuUploadImage)
 		r.With(s.requirePermission(auth.PermMenuManage)).Post("/dashboard/menu/items/{id}/image/delete", s.handleMenuDeleteImage)
@@ -139,6 +169,11 @@ func (s *Server) routes() http.Handler {
 		r.With(s.requirePermission(auth.PermStaffManage)).Post("/dashboard/staff/{id}/sessions/revoke", s.handleStaffSessionsRevoke)
 
 		r.With(s.requirePermission(auth.PermSettings)).Get("/dashboard/settings", s.handleSettingsPage)
+		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/profile", s.handleSettingsProfile)
+		r.With(s.requirePermission(auth.PermBranding)).Post("/dashboard/settings/branding", s.handleSettingsBranding)
+		r.With(s.requirePermission(auth.PermBranding)).Post("/dashboard/settings/branding/logo", s.handleSettingsLogo)
+		r.With(s.requirePermission(auth.PermBranding)).Post("/dashboard/settings/branding/cover", s.handleSettingsCover)
+		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/payments", s.handleSettingsPayments)
 		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/vat", s.handleSettingsVAT)
 		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/hours", s.handleSettingsHours)
 		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/zones", s.handleSettingsZoneCreate)

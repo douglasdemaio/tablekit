@@ -301,15 +301,19 @@ type AuditLog struct {
 }
 
 type BrandSetting struct {
-	MerchantID     uuid.UUID
-	LogoAssetID    *uuid.UUID
-	CoverAssetID   *uuid.UUID
-	PrimaryColor   string
-	SecondaryColor string
-	Font           string
-	Tagline        string
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	MerchantID      uuid.UUID
+	LogoAssetID     *uuid.UUID
+	CoverAssetID    *uuid.UUID
+	PrimaryColor    string
+	SecondaryColor  string
+	Font            string
+	Tagline         string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	Template        string
+	AccentColor     string
+	BackgroundColor string
+	TextColor       string
 }
 
 type Courier struct {
@@ -336,20 +340,79 @@ type Customer struct {
 	AnonymizedAt     pgtype.Timestamptz
 }
 
+type CustomerAccount struct {
+	ID              uuid.UUID
+	Email           string
+	Name            string
+	Phone           string
+	EmailVerifiedAt pgtype.Timestamptz
+	LastLoginAt     pgtype.Timestamptz
+	DisabledAt      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type CustomerAddress struct {
+	ID            uuid.UUID
+	CustomerID    uuid.UUID
+	Label         string
+	Recipient     string
+	Phone         string
+	Line1         string
+	Line2         string
+	Postcode      string
+	City          string
+	Country       string
+	DeliveryNotes string
+	IsDefault     bool
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type CustomerLoginCode struct {
+	ID        uuid.UUID
+	Email     string
+	CodeHash  string
+	Attempts  int32
+	ExpiresAt pgtype.Timestamptz
+	UsedAt    pgtype.Timestamptz
+	Ip        *netip.Addr
+	CreatedAt pgtype.Timestamptz
+}
+
+type CustomerSession struct {
+	ID         uuid.UUID
+	CustomerID uuid.UUID
+	TokenHash  []byte
+	Ip         *netip.Addr
+	UserAgent  string
+	CreatedAt  pgtype.Timestamptz
+	LastSeenAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	RevokedAt  pgtype.Timestamptz
+}
+
+type CustomerShare struct {
+	CustomerID uuid.UUID
+	MerchantID uuid.UUID
+	CreatedAt  pgtype.Timestamptz
+}
+
 type Delivery struct {
-	ID           uuid.UUID
-	MerchantID   uuid.UUID
-	OrderID      uuid.UUID
-	Mode         FulfilmentModeEnum
-	CourierID    *uuid.UUID
-	Status       string
-	DispatchedAt pgtype.Timestamptz
-	PickedUpAt   pgtype.Timestamptz
-	DeliveredAt  pgtype.Timestamptz
-	ProofCodeID  *uuid.UUID
-	Location     []byte
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID              uuid.UUID
+	MerchantID      uuid.UUID
+	OrderID         uuid.UUID
+	Mode            FulfilmentModeEnum
+	CourierID       *uuid.UUID
+	Status          string
+	DispatchedAt    pgtype.Timestamptz
+	PickedUpAt      pgtype.Timestamptz
+	DeliveredAt     pgtype.Timestamptz
+	ProofCodeID     *uuid.UUID
+	Location        []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	AssigneeStaffID *uuid.UUID
 }
 
 type DeliveryZone struct {
@@ -419,21 +482,23 @@ type MenuCategory struct {
 }
 
 type MenuItem struct {
-	ID           uuid.UUID
-	MerchantID   uuid.UUID
-	CategoryID   uuid.UUID
-	Name         string
-	Description  string
-	PriceMinor   int32
-	Currency     string
-	TaxRateBp    int32
-	ImageAssetID *uuid.UUID
-	Active       bool
-	Available    bool
-	SortOrder    int32
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	DeletedAt    pgtype.Timestamptz
+	ID            uuid.UUID
+	MerchantID    uuid.UUID
+	CategoryID    uuid.UUID
+	Name          string
+	Description   string
+	PriceMinor    int32
+	Currency      string
+	TaxRateBp     int32
+	ImageAssetID  *uuid.UUID
+	Active        bool
+	Available     bool
+	SortOrder     int32
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	DeletedAt     pgtype.Timestamptz
+	SoldOutUntil  pgtype.Timestamptz
+	SoldOutReason string
 }
 
 type MenuItemOptionGroup struct {
@@ -444,17 +509,28 @@ type MenuItemOptionGroup struct {
 }
 
 type Merchant struct {
-	ID        uuid.UUID
-	Name      string
-	Slug      string
-	LegalName *string
-	Timezone  string
-	Locale    string
-	Currency  string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-	DeletedAt pgtype.Timestamptz
-	VatRateBp int32
+	ID                  uuid.UUID
+	Name                string
+	Slug                string
+	LegalName           *string
+	Timezone            string
+	Locale              string
+	Currency            string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	DeletedAt           pgtype.Timestamptz
+	VatRateBp           int32
+	Description         string
+	Phone               string
+	Email               string
+	Street              string
+	Line2               string
+	Postcode            string
+	City                string
+	Country             string
+	Cuisine             string
+	PickupEnabled       bool
+	SelfDeliveryEnabled bool
 }
 
 type MerchantDomain struct {
@@ -515,6 +591,7 @@ type Order struct {
 	CancelledAt       pgtype.Timestamptz
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
+	CustomerAccountID *uuid.UUID
 }
 
 type OrderEvent struct {
@@ -562,6 +639,10 @@ type PaymentConnection struct {
 	Capabilities       json.RawMessage
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	PublishableKey     *string
+	SecretKeyEnc       []byte
+	WebhookSecretEnc   []byte
+	Livemode           bool
 }
 
 type PaymentRecord struct {

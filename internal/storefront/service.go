@@ -35,6 +35,8 @@ var (
 	ErrInvalidCode         = errors.New("storefront: invalid pickup code")
 	ErrCodeLocked          = errors.New("storefront: pickup code locked")
 	ErrNotReady            = errors.New("storefront: order is not ready")
+	ErrInvalidSlot         = errors.New("storefront: invalid time slot")
+	ErrCardUnavailable     = errors.New("storefront: card payment not configured")
 )
 
 const (
@@ -57,15 +59,34 @@ func NewService(store *db.Store) *Service { return &Service{store: store} }
 
 // Settings is the public merchant configuration.
 type Settings struct {
-	ID             uuid.UUID
-	Name           string
-	Slug           string
-	Currency       string
-	Timezone       *time.Location
-	VatRateBp      int32
-	Tagline        string
-	PrimaryColor   string
-	SecondaryColor string
+	ID                  uuid.UUID
+	Name                string
+	Slug                string
+	Currency            string
+	Timezone            *time.Location
+	VatRateBp           int32
+	Description         string
+	Phone               string
+	Email               string
+	Street              string
+	Line2               string
+	Postcode            string
+	City                string
+	Country             string
+	Cuisine             string
+	PickupEnabled       bool
+	SelfDeliveryEnabled bool
+	Tagline             string
+	PrimaryColor        string
+	SecondaryColor      string
+	AccentColor         string
+	BackgroundColor     string
+	TextColor           string
+	Template            string
+	Font                string
+	LogoKey             string
+	CoverKey            string
+	CardEnabled         bool
 }
 
 // Hour is one opening window for a weekday (0 = Sunday).
@@ -87,13 +108,14 @@ type Zone struct {
 
 // Item is a menu line on the public page.
 type Item struct {
-	ID          uuid.UUID
-	CategoryID  uuid.UUID
-	Name        string
-	Description string
-	PriceMinor  int32
-	Available   bool
-	ImageKey    string
+	ID           uuid.UUID
+	CategoryID   uuid.UUID
+	Name         string
+	Description  string
+	PriceMinor   int32
+	Available    bool
+	SoldOutUntil time.Time
+	ImageKey     string
 }
 
 // Category groups items for display.
@@ -145,7 +167,7 @@ func (s *Service) Load(ctx context.Context, merchantID uuid.UUID) (Storefront, e
 				Name:        it.Name,
 				Description: it.Description,
 				PriceMinor:  it.PriceMinor,
-				Available:   it.Available,
+				Available:   it.Available != nil && *it.Available,
 				ImageKey:    it.ImageKey,
 			})
 		}
@@ -176,34 +198,71 @@ type CartLine struct {
 	Quantity int
 }
 
-// OrderInput is a validated guest checkout request.
+// DeliveryAddress is the address snapshot stored on an order.
+type DeliveryAddress struct {
+	Recipient string `json:"recipient"`
+	Phone     string `json:"phone"`
+	Line1     string `json:"line1"`
+	Line2     string `json:"line2"`
+	Postcode  string `json:"postcode"`
+	City      string `json:"city"`
+	Country   string `json:"country"`
+	Notes     string `json:"notes"`
+}
+
+// OrderInput is a validated checkout request from a signed-in customer.
 type OrderInput struct {
-	Name       string
-	Fulfilment sqlcgen.FulfilmentModeEnum
-	Postcode   string
-	Address    string
-	Notes      string
-	Lines      []CartLine
-	Now        time.Time
+	CustomerID   uuid.UUID
+	Name         string
+	Email        string
+	Phone        string
+	Fulfilment   sqlcgen.FulfilmentModeEnum
+	Payment      string
+	Address      DeliveryAddress
+	Notes        string
+	ScheduledFor time.Time
+	ShareProfile bool
+	Lines        []CartLine
+	Now          time.Time
 }
 
 // PlacedOrder is returned once, together with the plaintext pickup code.
 type PlacedOrder struct {
-	ID         uuid.UUID
-	PublicRef  string
-	PickupCode string
-	Total      int32
-	Currency   string
-	Pickup     bool
+	ID           uuid.UUID
+	PublicRef    string
+	PickupCode   string
+	Total        int32
+	Currency     string
+	Pickup       bool
+	Card         bool
+	ScheduledFor time.Time
 }
 
-// PlaceOrder recomputes every price server-side and creates a submitted order.
+// PlaceOrder recomputes every price server-side and creates the order in the
+// state appropriate for its payment method.
 func (s *Service) PlaceOrder(ctx context.Context, merchantID uuid.UUID, in OrderInput) (PlacedOrder, error) {
 	in.Name = strings.TrimSpace(in.Name)
-	in.Postcode = strings.TrimSpace(in.Postcode)
-	in.Address = strings.TrimSpace(in.Address)
+	in.Email = strings.TrimSpace(in.Email)
+	in.Phone = strings.TrimSpace(in.Phone)
 	in.Notes = strings.TrimSpace(in.Notes)
-	if in.Name == "" || len(in.Name) > 120 || len(in.Address) > 500 || len(in.Notes) > 500 {
+	in.Address = DeliveryAddress{
+		Recipient: strings.TrimSpace(in.Address.Recipient),
+		Phone:     strings.TrimSpace(in.Address.Phone),
+		Line1:     strings.TrimSpace(in.Address.Line1),
+		Line2:     strings.TrimSpace(in.Address.Line2),
+		Postcode:  strings.ToUpper(strings.TrimSpace(in.Address.Postcode)),
+		City:      strings.TrimSpace(in.Address.City),
+		Country:   strings.ToUpper(strings.TrimSpace(in.Address.Country)),
+		Notes:     strings.TrimSpace(in.Address.Notes),
+	}
+	if in.CustomerID == uuid.Nil {
+		return PlacedOrder{}, ErrInvalidInput
+	}
+	if in.Payment != "card" {
+		in.Payment = "cash"
+	}
+	if in.Name == "" || len(in.Name) > 120 || len(in.Email) > 254 ||
+		len(in.Phone) > 40 || len(in.Notes) > 500 {
 		return PlacedOrder{}, ErrInvalidInput
 	}
 	if len(in.Lines) == 0 || len(in.Lines) > MaxItemsPerOrder {
@@ -214,8 +273,11 @@ func (s *Service) PlaceOrder(ctx context.Context, merchantID uuid.UUID, in Order
 	default:
 		return PlacedOrder{}, ErrInvalidInput
 	}
-	if in.Fulfilment == sqlcgen.FulfilmentModeSelfDelivery && in.Postcode == "" {
-		return PlacedOrder{}, ErrInvalidInput
+	if in.Fulfilment == sqlcgen.FulfilmentModeSelfDelivery {
+		a := in.Address
+		if a.Recipient == "" || a.Phone == "" || a.Line1 == "" || a.Postcode == "" || a.City == "" {
+			return PlacedOrder{}, ErrInvalidInput
+		}
 	}
 
 	var result PlacedOrder
@@ -236,13 +298,31 @@ func (s *Service) PlaceOrder(ctx context.Context, merchantID uuid.UUID, in Order
 		if !IsOpen(hours, now) {
 			return ErrClosed
 		}
+		if in.Fulfilment == sqlcgen.FulfilmentModePickup && !settings.PickupEnabled {
+			return ErrDeliveryUnavailable
+		}
+		if in.Fulfilment == sqlcgen.FulfilmentModeSelfDelivery && !settings.SelfDeliveryEnabled {
+			return ErrDeliveryUnavailable
+		}
+		scheduled := in.ScheduledFor
+		if !scheduled.IsZero() {
+			scheduled = scheduled.In(settings.Timezone)
+			if !ValidSlot(hours, now, scheduled) {
+				return ErrInvalidSlot
+			}
+		} else {
+			scheduled = now
+		}
+		if in.Payment == "card" && !settings.CardEnabled {
+			return ErrCardUnavailable
+		}
 		items, err := q.ListStorefrontItems(ctx)
 		if err != nil {
 			return err
 		}
 		byID := make(map[uuid.UUID]Item, len(items))
 		for _, it := range items {
-			byID[it.ID] = Item{ID: it.ID, Name: it.Name, PriceMinor: it.PriceMinor, Available: it.Available}
+			byID[it.ID] = Item{ID: it.ID, Name: it.Name, PriceMinor: it.PriceMinor, Available: it.Available != nil && *it.Available}
 		}
 
 		var subtotal int32
@@ -273,7 +353,7 @@ func (s *Service) PlaceOrder(ctx context.Context, merchantID uuid.UUID, in Order
 			if err != nil {
 				return err
 			}
-			zone, ok := MatchZone(zones, in.Postcode)
+			zone, ok := MatchZone(zones, in.Address.Postcode)
 			if !ok {
 				return ErrDeliveryUnavailable
 			}
@@ -296,20 +376,36 @@ func (s *Service) PlaceOrder(ctx context.Context, merchantID uuid.UUID, in Order
 		}
 		var address []byte
 		if in.Fulfilment == sqlcgen.FulfilmentModeSelfDelivery {
-			address, _ = json.Marshal(map[string]string{"postcode": in.Postcode, "address": in.Address})
+			in.Address.Country = defaultCountry(in.Address.Country)
+			address, _ = json.Marshal(in.Address)
 		}
-		row, err := q.CreateGuestOrder(ctx, sqlcgen.CreateGuestOrderParams{
+		status := sqlcgen.OrderStatusSubmitted
+		paymentStatus := sqlcgen.PaymentStatusUnpaid
+		if in.Payment == "card" {
+			status = sqlcgen.OrderStatusPendingPayment
+			paymentStatus = sqlcgen.PaymentStatusPending
+		}
+		email := in.Email
+		phone := in.Phone
+		row, err := q.CreateStorefrontOrder(ctx, sqlcgen.CreateStorefrontOrderParams{
 			Column1:          merchantID,
 			Column2:          ref,
-			Column3:          in.Fulfilment,
-			Column4:          settings.Currency,
+			Column3:          status,
+			Column4:          in.Fulfilment,
+			Column5:          in.Payment,
+			Column6:          paymentStatus,
+			Column7:          settings.Currency,
 			SubtotalMinor:    subtotal,
 			TaxMinor:         tax,
 			DeliveryFeeMinor: fee,
 			TotalMinor:       total,
 			ContactName:      in.Name,
+			ContactEmail:     &email,
+			ContactPhone:     &phone,
 			DeliveryAddress:  address,
 			Notes:            in.Notes,
+			Column17:         pgtype.Timestamptz{Time: scheduled, Valid: true},
+			Column18:         in.CustomerID,
 		})
 		if err != nil {
 			return err
@@ -327,34 +423,59 @@ func (s *Service) PlaceOrder(ctx context.Context, merchantID uuid.UUID, in Order
 				return err
 			}
 		}
-		if err := q.InsertGuestOrderEvent(ctx, sqlcgen.InsertGuestOrderEventParams{
+		if err := q.InsertStorefrontOrderEvent(ctx, sqlcgen.InsertStorefrontOrderEventParams{
 			Column1: merchantID,
 			Column2: row.ID,
+			Column3: status,
+			Column4: "customer",
 		}); err != nil {
 			return err
 		}
-		if in.Fulfilment == sqlcgen.FulfilmentModePickup {
-			salt := make([]byte, 16)
-			if _, err := rand.Read(salt); err != nil {
-				return err
-			}
-			if err := q.InsertPickupCode(ctx, sqlcgen.InsertPickupCodeParams{
-				Column1: merchantID,
-				Column2: row.ID,
-				Column3: hashCode(salt, code),
-				Column4: salt,
-				Column5: pgtype.Timestamptz{Time: now.Add(PickupCodeTTL), Valid: true},
+		if in.Fulfilment == sqlcgen.FulfilmentModeSelfDelivery {
+			if err := q.InsertDelivery(ctx, sqlcgen.InsertDeliveryParams{
+				Column1: merchantID, Column2: row.ID,
 			}); err != nil {
 				return err
 			}
 		}
+		kind := sqlcgen.HandoffKindPickup
+		if in.Fulfilment == sqlcgen.FulfilmentModeSelfDelivery {
+			kind = sqlcgen.HandoffKindDelivery
+		}
+		salt := make([]byte, 16)
+		if _, err := rand.Read(salt); err != nil {
+			return err
+		}
+		if err := q.InsertOrderHandoffCode(ctx, sqlcgen.InsertOrderHandoffCodeParams{
+			Column1: merchantID,
+			Column2: row.ID,
+			Column3: kind,
+			Column4: hashCode(salt, code),
+			Column5: salt,
+			Column6: pgtype.Timestamptz{Time: scheduled.Add(PickupCodeTTL + time.Until(now)), Valid: true},
+		}); err != nil {
+			return err
+		}
+		if in.ShareProfile {
+			if err := q.UpsertCustomerShare(ctx, sqlcgen.UpsertCustomerShareParams{
+				Column1: in.CustomerID, Column2: merchantID,
+			}); err != nil {
+				return err
+			}
+		} else if err := q.DeleteCustomerShare(ctx, sqlcgen.DeleteCustomerShareParams{
+			Column1: in.CustomerID, Column2: merchantID,
+		}); err != nil {
+			return err
+		}
 		result = PlacedOrder{
-			ID:         row.ID,
-			PublicRef:  row.PublicRef,
-			PickupCode: code,
-			Total:      total,
-			Currency:   settings.Currency,
-			Pickup:     in.Fulfilment == sqlcgen.FulfilmentModePickup,
+			ID:           row.ID,
+			PublicRef:    row.PublicRef,
+			PickupCode:   code,
+			Total:        total,
+			Currency:     settings.Currency,
+			Pickup:       in.Fulfilment == sqlcgen.FulfilmentModePickup,
+			Card:         in.Payment == "card",
+			ScheduledFor: scheduled,
 		}
 		return nil
 	})
@@ -365,6 +486,20 @@ func (s *Service) PlaceOrder(ctx context.Context, merchantID uuid.UUID, in Order
 type PublicOrder struct {
 	Order sqlcgen.Order
 	Items []sqlcgen.OrderItem
+}
+
+// OrderByID loads one order for a staff-initiated handoff.
+func (s *Service) OrderByID(ctx context.Context, merchantID, orderID uuid.UUID) (sqlcgen.Order, error) {
+	var out sqlcgen.Order
+	err := s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		order, err := q.GetOrderByID(ctx, orderID)
+		out = order
+		return err
+	})
+	if err != nil {
+		return sqlcgen.Order{}, ErrNotFound
+	}
+	return out, nil
 }
 
 // OrderByRef loads one order by its unguessable public reference.
@@ -385,6 +520,152 @@ func (s *Service) OrderByRef(ctx context.Context, merchantID uuid.UUID, ref stri
 	return out, err
 }
 
+// DeliveryJob is a driver-facing delivery row.
+type DeliveryJob struct {
+	OrderID      uuid.UUID
+	Ref          string
+	Status       sqlcgen.OrderStatusEnum
+	Payment      sqlcgen.PaymentStatusEnum
+	PaymentMode  string
+	Currency     string
+	Total        int32
+	ContactName  string
+	Phone        string
+	Address      DeliveryAddress
+	Notes        string
+	ScheduledFor time.Time
+	PlacedAt     time.Time
+	AssigneeID   *uuid.UUID
+	AssigneeName string
+}
+
+func (s *Service) DeliveryJobs(ctx context.Context, merchantID uuid.UUID) ([]DeliveryJob, error) {
+	var out []DeliveryJob
+	err := s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		rows, err := q.ListDeliveryOrders(ctx, merchantID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			job := DeliveryJob{
+				OrderID: row.ID, Ref: row.PublicRef, Status: row.Status,
+				Payment: row.PaymentStatusEnum, PaymentMode: row.PaymentMethod,
+				Currency: row.Currency, Total: row.TotalMinor, ContactName: row.ContactName,
+				Notes: row.Notes, AssigneeID: row.AssigneeStaffID, AssigneeName: row.AssigneeName,
+			}
+			if row.ContactPhone != nil {
+				job.Phone = *row.ContactPhone
+			}
+			if len(row.DeliveryAddress) > 0 {
+				_ = json.Unmarshal(row.DeliveryAddress, &job.Address)
+			}
+			if row.ScheduledFor.Valid {
+				job.ScheduledFor = row.ScheduledFor.Time
+			}
+			if row.PlacedAt.Valid {
+				job.PlacedAt = row.PlacedAt.Time
+			}
+			out = append(out, job)
+		}
+		return nil
+	})
+	return out, err
+}
+
+func (s *Service) ClaimDelivery(ctx context.Context, merchantID, staffID, orderID uuid.UUID) error {
+	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		_, err := q.ClaimDelivery(ctx, sqlcgen.ClaimDeliveryParams{
+			AssigneeStaffID: &staffID, Column2: merchantID, Column3: orderID,
+		})
+		if err != nil {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+func (s *Service) AssignDelivery(ctx context.Context, merchantID, staffID, orderID uuid.UUID) error {
+	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		staff, err := q.GetStaffByID(ctx, staffID)
+		if err != nil || staff.Role != sqlcgen.StaffRoleDriver || staff.DisabledAt.Valid {
+			return ErrInvalidInput
+		}
+		return q.AssignDelivery(ctx, sqlcgen.AssignDeliveryParams{
+			StaffID: &staffID, MerchantID: merchantID, OrderID: orderID,
+		})
+	})
+}
+
+func (s *Service) ReleaseDelivery(ctx context.Context, merchantID, orderID uuid.UUID) error {
+	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		return q.ReleaseDelivery(ctx, sqlcgen.ReleaseDeliveryParams{
+			Column1: merchantID, Column2: orderID,
+		})
+	})
+}
+
+func (s *Service) DeliveryFor(ctx context.Context, merchantID, orderID uuid.UUID) (sqlcgen.Delivery, error) {
+	var out sqlcgen.Delivery
+	err := s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		d, err := q.GetDeliveryByOrder(ctx, sqlcgen.GetDeliveryByOrderParams{
+			Column1: merchantID, Column2: orderID,
+		})
+		out = d
+		return err
+	})
+	return out, err
+}
+
+// VerifyDelivery checks the drop-off code, completes the order and closes the
+// delivery job.
+func (s *Service) VerifyDelivery(ctx context.Context, merchantID, staffID, orderID uuid.UUID, code string) error {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if len(code) != 6 {
+		return ErrInvalidCode
+	}
+	return s.store.WithTenantTx(ctx, merchantID, func(_ pgx.Tx, q *sqlcgen.Queries) error {
+		order, err := q.GetOrderByID(ctx, orderID)
+		if err != nil {
+			return ErrNotFound
+		}
+		if order.Status != sqlcgen.OrderStatusReady && order.Status != sqlcgen.OrderStatusOutForDelivery {
+			return ErrNotReady
+		}
+		hc, err := q.GetHandoffCode(ctx, sqlcgen.GetHandoffCodeParams{
+			Column1: orderID, Column2: sqlcgen.HandoffKindDelivery,
+		})
+		if err != nil {
+			return ErrInvalidCode
+		}
+		if hc.UsedAt.Valid || (hc.ExpiresAt.Valid && time.Now().After(hc.ExpiresAt.Time)) || hc.Attempts >= MaxHandoffAttempts {
+			return ErrCodeLocked
+		}
+		if !hashMatches(hc.Salt, hc.CodeHash, code) {
+			_ = q.IncrementHandoffAttempts(ctx, hc.ID)
+			return ErrInvalidCode
+		}
+		if err := q.UseHandoffCode(ctx, hc.ID); err != nil {
+			return err
+		}
+		if _, err := q.MarkOrderCollected(ctx, orderID); err != nil {
+			return err
+		}
+		if err := q.CompleteDelivery(ctx, sqlcgen.CompleteDeliveryParams{
+			Column1: merchantID, Column2: orderID,
+		}); err != nil {
+			return err
+		}
+		return q.InsertStaffOrderEvent(ctx, sqlcgen.InsertStaffOrderEventParams{
+			Column1:  merchantID,
+			Column2:  orderID,
+			Column3:  "delivery_verified",
+			ToStatus: ptr(sqlcgen.OrderStatusCompleted),
+			Column5:  staffID,
+			Column6:  json.RawMessage(`{}`),
+		})
+	})
+}
+
 // VerifyPickup checks the guest's pickup code and completes a ready order.
 func (s *Service) VerifyPickup(ctx context.Context, merchantID, staffID, orderID uuid.UUID, code string) error {
 	code = strings.ToUpper(strings.TrimSpace(code))
@@ -399,7 +680,9 @@ func (s *Service) VerifyPickup(ctx context.Context, merchantID, staffID, orderID
 		if order.Status != sqlcgen.OrderStatusReady {
 			return ErrNotReady
 		}
-		hc, err := q.GetHandoffCode(ctx, orderID)
+		hc, err := q.GetHandoffCode(ctx, sqlcgen.GetHandoffCodeParams{
+			Column1: orderID, Column2: sqlcgen.HandoffKindPickup,
+		})
 		if err != nil {
 			return ErrInvalidCode
 		}
@@ -425,6 +708,44 @@ func (s *Service) VerifyPickup(ctx context.Context, merchantID, staffID, orderID
 			Column6:  json.RawMessage(`{}`),
 		})
 	})
+}
+
+// ValidSlot reports whether scheduled is a valid 30-minute slot within the
+// next seven days and inside opening hours.
+func ValidSlot(hours []Hour, now, scheduled time.Time) bool {
+	if scheduled.Before(now.Add(5*time.Minute)) || scheduled.After(now.Add(7*24*time.Hour)) {
+		return false
+	}
+	if scheduled.Minute()%30 != 0 || scheduled.Second() != 0 || scheduled.Nanosecond() != 0 {
+		return false
+	}
+	return IsOpen(hours, scheduled)
+}
+
+// Slots returns bookable 30-minute slots for the next seven days.
+func Slots(hours []Hour, now time.Time, limit int) []time.Time {
+	if limit <= 0 {
+		return nil
+	}
+	start := now.Truncate(30 * time.Minute).Add(30 * time.Minute)
+	out := make([]time.Time, 0, limit)
+	for i := 0; i < 7*24*2 && len(out) < limit; i++ {
+		t := start.Add(time.Duration(i) * 30 * time.Minute)
+		if t.Before(now.Add(5 * time.Minute)) {
+			continue
+		}
+		if IsOpen(hours, t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func defaultCountry(v string) string {
+	if len(v) == 2 {
+		return v
+	}
+	return "DE"
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -555,15 +876,34 @@ func loadSettings(ctx context.Context, q *sqlcgen.Queries, merchantID uuid.UUID)
 		loc = time.UTC
 	}
 	return Settings{
-		ID:             row.ID,
-		Name:           row.Name,
-		Slug:           row.Slug,
-		Currency:       row.Currency,
-		Timezone:       loc,
-		VatRateBp:      row.VatRateBp,
-		Tagline:        row.Tagline,
-		PrimaryColor:   row.PrimaryColor,
-		SecondaryColor: row.SecondaryColor,
+		ID:                  row.ID,
+		Name:                row.Name,
+		Slug:                row.Slug,
+		Currency:            row.Currency,
+		Timezone:            loc,
+		VatRateBp:           row.VatRateBp,
+		Description:         row.Description,
+		Phone:               row.Phone,
+		Email:               row.Email,
+		Street:              row.Street,
+		Line2:               row.Line2,
+		Postcode:            row.Postcode,
+		City:                row.City,
+		Country:             row.Country,
+		Cuisine:             row.Cuisine,
+		PickupEnabled:       row.PickupEnabled,
+		SelfDeliveryEnabled: row.SelfDeliveryEnabled,
+		Tagline:             row.Tagline,
+		PrimaryColor:        row.PrimaryColor,
+		SecondaryColor:      row.SecondaryColor,
+		AccentColor:         row.AccentColor,
+		BackgroundColor:     row.BackgroundColor,
+		TextColor:           row.TextColor,
+		Template:            row.Template,
+		Font:                row.Font,
+		LogoKey:             row.LogoKey,
+		CoverKey:            row.CoverKey,
+		CardEnabled:         row.CardEnabled,
 	}, nil
 }
 
@@ -760,4 +1100,213 @@ func clockString(t pgtype.Time) string {
 	}
 	total := int(t.Microseconds / (60 * 1_000_000))
 	return fmt.Sprintf("%02d:%02d", total/60, total%60)
+}
+
+// MerchantProfile is the editable public restaurant profile.
+type MerchantProfile struct {
+	Name                string
+	LegalName           string
+	Timezone            string
+	Locale              string
+	VATRateBP           int32
+	Description         string
+	Phone               string
+	Email               string
+	Street              string
+	Line2               string
+	Postcode            string
+	City                string
+	Country             string
+	Cuisine             string
+	PickupEnabled       bool
+	SelfDeliveryEnabled bool
+}
+
+func (s *Service) MerchantProfile(ctx context.Context, merchantID uuid.UUID) (MerchantProfile, error) {
+	var out MerchantProfile
+	err := s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		m, err := q.GetMerchantFull(ctx, merchantID)
+		if err != nil {
+			return err
+		}
+		out = MerchantProfile{
+			Name: m.Name, Timezone: m.Timezone, Locale: m.Locale, VATRateBP: m.VatRateBp,
+			Description: m.Description, Phone: m.Phone, Email: m.Email, Street: m.Street,
+			Line2: m.Line2, Postcode: m.Postcode, City: m.City, Country: m.Country,
+			Cuisine: m.Cuisine, PickupEnabled: m.PickupEnabled, SelfDeliveryEnabled: m.SelfDeliveryEnabled,
+		}
+		if m.LegalName != nil {
+			out.LegalName = *m.LegalName
+		}
+		return nil
+	})
+	return out, err
+}
+
+func (s *Service) UpdateMerchantProfile(ctx context.Context, merchantID uuid.UUID, p MerchantProfile) error {
+	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		return q.UpdateMerchantFull(ctx, sqlcgen.UpdateMerchantFullParams{
+			Name: p.Name, LegalName: &p.LegalName, Timezone: p.Timezone, Locale: p.Locale,
+			VatRateBp: p.VATRateBP, Description: p.Description, Phone: p.Phone, Email: p.Email,
+			Street: p.Street, Line2: p.Line2, Postcode: p.Postcode, City: p.City,
+			Country: p.Country, Cuisine: p.Cuisine, PickupEnabled: p.PickupEnabled,
+			SelfDeliveryEnabled: p.SelfDeliveryEnabled, ID: merchantID,
+		})
+	})
+}
+
+// Brand is the editable storefront branding.
+type Brand struct {
+	LogoAssetID  *uuid.UUID
+	CoverAssetID *uuid.UUID
+	Primary      string
+	Secondary    string
+	Font         string
+	Tagline      string
+	Template     string
+	Accent       string
+	Background   string
+	Text         string
+}
+
+func (s *Service) Brand(ctx context.Context, merchantID uuid.UUID) (Brand, error) {
+	out := Brand{
+		Primary: "#1c1917", Secondary: "#78716c", Font: "Inter",
+		Template: "classic-bistro", Accent: "#f59e0b", Background: "#ffffff", Text: "#111111",
+	}
+	err := s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		b, err := q.GetBrandSettings(ctx, merchantID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		out = Brand{
+			LogoAssetID: b.LogoAssetID, CoverAssetID: b.CoverAssetID,
+			Primary: b.PrimaryColor, Secondary: b.SecondaryColor, Font: b.Font,
+			Tagline: b.Tagline, Template: b.Template, Accent: b.AccentColor,
+			Background: b.BackgroundColor, Text: b.TextColor,
+		}
+		return nil
+	})
+	return out, err
+}
+
+func (s *Service) UpdateBrand(ctx context.Context, merchantID uuid.UUID, b Brand) error {
+	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		return q.UpdateBrandSettings(ctx, sqlcgen.UpdateBrandSettingsParams{
+			MerchantID: merchantID, PrimaryColor: b.Primary, SecondaryColor: b.Secondary,
+			Font: b.Font, Tagline: b.Tagline, Template: b.Template, AccentColor: b.Accent,
+			BackgroundColor: b.Background, TextColor: b.Text,
+		})
+	})
+}
+
+func (s *Service) SetBrandAsset(ctx context.Context, merchantID uuid.UUID, kind string, assetID uuid.UUID) error {
+	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		if kind == "cover" {
+			return q.SetBrandCover(ctx, sqlcgen.SetBrandCoverParams{CoverAssetID: &assetID, Column2: merchantID})
+		}
+		return q.SetBrandLogo(ctx, sqlcgen.SetBrandLogoParams{LogoAssetID: &assetID, Column2: merchantID})
+	})
+}
+
+// PaymentConnection is the restaurant's own Stripe configuration.
+type PaymentConnection struct {
+	Status           string
+	PublishableKey   string
+	SecretKeyEnc     []byte
+	WebhookSecretEnc []byte
+	LiveMode         bool
+}
+
+func (s *Service) PaymentConnection(ctx context.Context, merchantID uuid.UUID) (PaymentConnection, error) {
+	var out PaymentConnection
+	err := s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		pc, err := q.GetPaymentConnection(ctx, merchantID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		out.Status = pc.Status
+		out.LiveMode = pc.Livemode
+		out.SecretKeyEnc = pc.SecretKeyEnc
+		out.WebhookSecretEnc = pc.WebhookSecretEnc
+		if pc.PublishableKey != nil {
+			out.PublishableKey = *pc.PublishableKey
+		}
+		return nil
+	})
+	return out, err
+}
+
+func (s *Service) SavePaymentConnection(ctx context.Context, merchantID uuid.UUID, publishable string, secretEnc, webhookEnc []byte, live bool) error {
+	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		return q.UpsertPaymentConnection(ctx, sqlcgen.UpsertPaymentConnectionParams{
+			MerchantID: merchantID, Status: "active", PublishableKey: &publishable,
+			SecretKeyEnc: secretEnc, WebhookSecretEnc: webhookEnc, Livemode: live,
+		})
+	})
+}
+
+func (s *Service) CreatePaymentRecord(ctx context.Context, merchantID, orderID uuid.UUID, ref string, amount int32, currency string) error {
+	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		return q.CreatePaymentRecord(ctx, sqlcgen.CreatePaymentRecordParams{
+			Column1: merchantID, Column2: orderID, Column3: ref, AmountMinor: amount, Column5: currency,
+		})
+	})
+}
+
+func (s *Service) PaymentRecordByRef(ctx context.Context, merchantID uuid.UUID, ref string) (sqlcgen.GetPaymentRecordByRefRow, error) {
+	var out sqlcgen.GetPaymentRecordByRefRow
+	err := s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		rec, err := q.GetPaymentRecordByRef(ctx, sqlcgen.GetPaymentRecordByRefParams{Column1: merchantID, Column2: ref})
+		out = rec
+		return err
+	})
+	return out, err
+}
+
+func (s *Service) SettlePayment(ctx context.Context, merchantID, recordID, orderID uuid.UUID) error {
+	return s.store.WithTenantTx(ctx, merchantID, func(_ pgx.Tx, q *sqlcgen.Queries) error {
+		if err := q.MarkPaymentRecordPaid(ctx, recordID); err != nil {
+			return err
+		}
+		_, err := q.MarkOrderPaymentPaid(ctx, orderID)
+		return err
+	})
+}
+
+func (s *Service) FailPayment(ctx context.Context, merchantID, recordID, orderID uuid.UUID) error {
+	return s.store.WithTenantTx(ctx, merchantID, func(_ pgx.Tx, q *sqlcgen.Queries) error {
+		if err := q.MarkPaymentRecordFailed(ctx, recordID); err != nil {
+			return err
+		}
+		return q.MarkOrderPaymentFailed(ctx, orderID)
+	})
+}
+
+// BeginWebhookEvent records a provider event. The bool is false for duplicates.
+func (s *Service) BeginWebhookEvent(ctx context.Context, merchantID uuid.UUID, eventID, eventType string, payload []byte) (int64, bool, error) {
+	var id int64
+	err := s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		got, err := q.InsertWebhookEvent(ctx, sqlcgen.InsertWebhookEventParams{
+			Column1: eventID, Column2: eventType, Column3: json.RawMessage(payload),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		id = got
+		return err
+	})
+	return id, id != 0, err
+}
+
+func (s *Service) FinishWebhookEvent(ctx context.Context, merchantID uuid.UUID, id int64, status string, errText *string) error {
+	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
+		return q.MarkWebhookEvent(ctx, sqlcgen.MarkWebhookEventParams{Status: status, Error: errText, Column3: id})
+	})
 }

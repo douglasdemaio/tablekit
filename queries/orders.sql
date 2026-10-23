@@ -2,9 +2,10 @@
 SELECT id, merchant_id, public_ref, customer_id, status, fulfilment, payment_method,
        payment_status, currency, subtotal_minor, tax_minor, delivery_fee_minor, total_minor,
        contact_name, contact_email, contact_phone, delivery_address, notes, scheduled_for,
-       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at
+       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at,
+       customer_account_id
 FROM orders
-WHERE status NOT IN ('completed', 'cancelled', 'refunded', 'payment_failed', 'disputed')
+WHERE status NOT IN ('pending_payment', 'completed', 'cancelled', 'refunded', 'payment_failed', 'disputed')
 ORDER BY created_at ASC
 LIMIT 100;
 
@@ -12,7 +13,8 @@ LIMIT 100;
 SELECT id, merchant_id, public_ref, customer_id, status, fulfilment, payment_method,
        payment_status, currency, subtotal_minor, tax_minor, delivery_fee_minor, total_minor,
        contact_name, contact_email, contact_phone, delivery_address, notes, scheduled_for,
-       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at
+       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at,
+       customer_account_id
 FROM orders
 WHERE id = $1;
 

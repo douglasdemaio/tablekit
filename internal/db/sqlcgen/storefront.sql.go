@@ -40,51 +40,67 @@ func (q *Queries) CreateDeliveryZone(ctx context.Context, arg CreateDeliveryZone
 	return id, err
 }
 
-const createGuestOrder = `-- name: CreateGuestOrder :one
+const createStorefrontOrder = `-- name: CreateStorefrontOrder :one
 INSERT INTO orders (merchant_id, public_ref, status, fulfilment, payment_method,
                     payment_status, currency, subtotal_minor, tax_minor,
-                    delivery_fee_minor, total_minor, contact_name,
-                    delivery_address, notes, placed_at)
-VALUES ($1::uuid, $2::text, 'submitted'::order_status, $3::fulfilment_mode,
-        'cash', 'unpaid', $4::char(3), $5, $6, $7, $8, $9, $10, $11, now())
+                    delivery_fee_minor, total_minor, contact_name, contact_email,
+                    contact_phone, delivery_address, notes, scheduled_for,
+                    customer_account_id, placed_at)
+VALUES ($1::uuid, $2::text, $3::order_status, $4::fulfilment_mode,
+        $5::text, $6::payment_status, $7::char(3), $8, $9, $10, $11, $12, $13,
+        $14, $15, $16, $17::timestamptz, $18::uuid, now())
 RETURNING id, public_ref, created_at
 `
 
-type CreateGuestOrderParams struct {
+type CreateStorefrontOrderParams struct {
 	Column1          uuid.UUID
 	Column2          string
-	Column3          FulfilmentModeEnum
-	Column4          string
+	Column3          OrderStatusEnum
+	Column4          FulfilmentModeEnum
+	Column5          string
+	Column6          PaymentStatusEnum
+	Column7          string
 	SubtotalMinor    int32
 	TaxMinor         int32
 	DeliveryFeeMinor int32
 	TotalMinor       int32
 	ContactName      string
+	ContactEmail     *string
+	ContactPhone     *string
 	DeliveryAddress  []byte
 	Notes            string
+	Column17         pgtype.Timestamptz
+	Column18         uuid.UUID
 }
 
-type CreateGuestOrderRow struct {
+type CreateStorefrontOrderRow struct {
 	ID        uuid.UUID
 	PublicRef string
 	CreatedAt pgtype.Timestamptz
 }
 
-func (q *Queries) CreateGuestOrder(ctx context.Context, arg CreateGuestOrderParams) (CreateGuestOrderRow, error) {
-	row := q.db.QueryRow(ctx, createGuestOrder,
+func (q *Queries) CreateStorefrontOrder(ctx context.Context, arg CreateStorefrontOrderParams) (CreateStorefrontOrderRow, error) {
+	row := q.db.QueryRow(ctx, createStorefrontOrder,
 		arg.Column1,
 		arg.Column2,
 		arg.Column3,
 		arg.Column4,
+		arg.Column5,
+		arg.Column6,
+		arg.Column7,
 		arg.SubtotalMinor,
 		arg.TaxMinor,
 		arg.DeliveryFeeMinor,
 		arg.TotalMinor,
 		arg.ContactName,
+		arg.ContactEmail,
+		arg.ContactPhone,
 		arg.DeliveryAddress,
 		arg.Notes,
+		arg.Column17,
+		arg.Column18,
 	)
-	var i CreateGuestOrderRow
+	var i CreateStorefrontOrderRow
 	err := row.Scan(&i.ID, &i.PublicRef, &i.CreatedAt)
 	return i, err
 }
@@ -112,8 +128,13 @@ const getHandoffCode = `-- name: GetHandoffCode :one
 SELECT id, code_hash, salt, attempts, used_at, expires_at
 FROM handoff_codes
 WHERE order_id = $1::uuid
-  AND kind = 'pickup'
+  AND kind = $2::handoff_kind
 `
+
+type GetHandoffCodeParams struct {
+	Column1 uuid.UUID
+	Column2 HandoffKindEnum
+}
 
 type GetHandoffCodeRow struct {
 	ID        uuid.UUID
@@ -124,8 +145,8 @@ type GetHandoffCodeRow struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
-func (q *Queries) GetHandoffCode(ctx context.Context, dollar_1 uuid.UUID) (GetHandoffCodeRow, error) {
-	row := q.db.QueryRow(ctx, getHandoffCode, dollar_1)
+func (q *Queries) GetHandoffCode(ctx context.Context, arg GetHandoffCodeParams) (GetHandoffCodeRow, error) {
+	row := q.db.QueryRow(ctx, getHandoffCode, arg.Column1, arg.Column2)
 	var i GetHandoffCodeRow
 	err := row.Scan(
 		&i.ID,
@@ -142,7 +163,8 @@ const getOrderByPublicRef = `-- name: GetOrderByPublicRef :one
 SELECT id, merchant_id, public_ref, customer_id, status, fulfilment, payment_method,
        payment_status, currency, subtotal_minor, tax_minor, delivery_fee_minor, total_minor,
        contact_name, contact_email, contact_phone, delivery_address, notes, scheduled_for,
-       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at
+       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at,
+       customer_account_id
 FROM orders
 WHERE public_ref = $1
 `
@@ -177,31 +199,68 @@ func (q *Queries) GetOrderByPublicRef(ctx context.Context, publicRef string) (Or
 		&i.CancelledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomerAccountID,
 	)
 	return i, err
 }
 
 const getStorefrontSettings = `-- name: GetStorefrontSettings :one
 SELECT m.id, m.name, m.slug, m.currency, m.timezone, m.vat_rate_bp,
+       m.description, m.phone, m.email, m.street, m.line2, m.postcode, m.city,
+       m.country, m.cuisine, m.pickup_enabled, m.self_delivery_enabled,
        COALESCE(bs.tagline, '')::text AS tagline,
        COALESCE(bs.primary_color, '#1f2937')::text AS primary_color,
-       COALESCE(bs.secondary_color, '#f59e0b')::text AS secondary_color
+       COALESCE(bs.secondary_color, '#f59e0b')::text AS secondary_color,
+       COALESCE(bs.accent_color, '#f59e0b')::text AS accent_color,
+       COALESCE(bs.background_color, '#ffffff')::text AS background_color,
+       COALESCE(bs.text_color, '#111111')::text AS text_color,
+       COALESCE(bs.template, 'classic-bistro')::text AS template,
+       COALESCE(bs.font, 'system')::text AS font,
+       COALESCE(logo.object_key, '')::text AS logo_key,
+       COALESCE(cover.object_key, '')::text AS cover_key,
+       EXISTS (
+           SELECT 1 FROM payment_connections pc
+           WHERE pc.merchant_id = m.id AND pc.provider = 'stripe'
+             AND pc.status = 'active' AND pc.secret_key_enc IS NOT NULL
+             AND pc.webhook_secret_enc IS NOT NULL
+       ) AS card_enabled
 FROM merchants m
 LEFT JOIN brand_settings bs ON bs.merchant_id = m.id
+LEFT JOIN media_assets logo ON logo.id = bs.logo_asset_id AND logo.deleted_at IS NULL
+LEFT JOIN media_assets cover ON cover.id = bs.cover_asset_id AND cover.deleted_at IS NULL
 WHERE m.id = $1::uuid
   AND m.deleted_at IS NULL
 `
 
 type GetStorefrontSettingsRow struct {
-	ID             uuid.UUID
-	Name           string
-	Slug           string
-	Currency       string
-	Timezone       string
-	VatRateBp      int32
-	Tagline        string
-	PrimaryColor   string
-	SecondaryColor string
+	ID                  uuid.UUID
+	Name                string
+	Slug                string
+	Currency            string
+	Timezone            string
+	VatRateBp           int32
+	Description         string
+	Phone               string
+	Email               string
+	Street              string
+	Line2               string
+	Postcode            string
+	City                string
+	Country             string
+	Cuisine             string
+	PickupEnabled       bool
+	SelfDeliveryEnabled bool
+	Tagline             string
+	PrimaryColor        string
+	SecondaryColor      string
+	AccentColor         string
+	BackgroundColor     string
+	TextColor           string
+	Template            string
+	Font                string
+	LogoKey             string
+	CoverKey            string
+	CardEnabled         bool
 }
 
 func (q *Queries) GetStorefrontSettings(ctx context.Context, dollar_1 uuid.UUID) (GetStorefrontSettingsRow, error) {
@@ -214,9 +273,28 @@ func (q *Queries) GetStorefrontSettings(ctx context.Context, dollar_1 uuid.UUID)
 		&i.Currency,
 		&i.Timezone,
 		&i.VatRateBp,
+		&i.Description,
+		&i.Phone,
+		&i.Email,
+		&i.Street,
+		&i.Line2,
+		&i.Postcode,
+		&i.City,
+		&i.Country,
+		&i.Cuisine,
+		&i.PickupEnabled,
+		&i.SelfDeliveryEnabled,
 		&i.Tagline,
 		&i.PrimaryColor,
 		&i.SecondaryColor,
+		&i.AccentColor,
+		&i.BackgroundColor,
+		&i.TextColor,
+		&i.Template,
+		&i.Font,
+		&i.LogoKey,
+		&i.CoverKey,
+		&i.CardEnabled,
 	)
 	return i, err
 }
@@ -229,21 +307,6 @@ WHERE id = $1::uuid
 
 func (q *Queries) IncrementHandoffAttempts(ctx context.Context, dollar_1 uuid.UUID) error {
 	_, err := q.db.Exec(ctx, incrementHandoffAttempts, dollar_1)
-	return err
-}
-
-const insertGuestOrderEvent = `-- name: InsertGuestOrderEvent :exec
-INSERT INTO order_events (merchant_id, order_id, event_type, to_status, actor_type, metadata)
-VALUES ($1::uuid, $2::uuid, 'order_placed', 'submitted'::order_status, 'guest', '{}'::jsonb)
-`
-
-type InsertGuestOrderEventParams struct {
-	Column1 uuid.UUID
-	Column2 uuid.UUID
-}
-
-func (q *Queries) InsertGuestOrderEvent(ctx context.Context, arg InsertGuestOrderEventParams) error {
-	_, err := q.db.Exec(ctx, insertGuestOrderEvent, arg.Column1, arg.Column2)
 	return err
 }
 
@@ -298,26 +361,28 @@ func (q *Queries) InsertOpeningHour(ctx context.Context, arg InsertOpeningHourPa
 	return err
 }
 
-const insertPickupCode = `-- name: InsertPickupCode :exec
+const insertOrderHandoffCode = `-- name: InsertOrderHandoffCode :exec
 INSERT INTO handoff_codes (merchant_id, order_id, kind, code_hash, salt, expires_at)
-VALUES ($1::uuid, $2::uuid, 'pickup', $3::bytea, $4::bytea, $5::timestamptz)
+VALUES ($1::uuid, $2::uuid, $3::handoff_kind, $4::bytea, $5::bytea, $6::timestamptz)
 `
 
-type InsertPickupCodeParams struct {
+type InsertOrderHandoffCodeParams struct {
 	Column1 uuid.UUID
 	Column2 uuid.UUID
-	Column3 []byte
+	Column3 HandoffKindEnum
 	Column4 []byte
-	Column5 pgtype.Timestamptz
+	Column5 []byte
+	Column6 pgtype.Timestamptz
 }
 
-func (q *Queries) InsertPickupCode(ctx context.Context, arg InsertPickupCodeParams) error {
-	_, err := q.db.Exec(ctx, insertPickupCode,
+func (q *Queries) InsertOrderHandoffCode(ctx context.Context, arg InsertOrderHandoffCodeParams) error {
+	_, err := q.db.Exec(ctx, insertOrderHandoffCode,
 		arg.Column1,
 		arg.Column2,
 		arg.Column3,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	return err
 }
@@ -344,6 +409,28 @@ func (q *Queries) InsertStaffOrderEvent(ctx context.Context, arg InsertStaffOrde
 		arg.ToStatus,
 		arg.Column5,
 		arg.Column6,
+	)
+	return err
+}
+
+const insertStorefrontOrderEvent = `-- name: InsertStorefrontOrderEvent :exec
+INSERT INTO order_events (merchant_id, order_id, event_type, to_status, actor_type, metadata)
+VALUES ($1::uuid, $2::uuid, 'order_placed', $3::order_status, $4::text, '{}'::jsonb)
+`
+
+type InsertStorefrontOrderEventParams struct {
+	Column1 uuid.UUID
+	Column2 uuid.UUID
+	Column3 OrderStatusEnum
+	Column4 string
+}
+
+func (q *Queries) InsertStorefrontOrderEvent(ctx context.Context, arg InsertStorefrontOrderEventParams) error {
+	_, err := q.db.Exec(ctx, insertStorefrontOrderEvent,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
 	)
 	return err
 }
@@ -464,7 +551,8 @@ func (q *Queries) ListStorefrontCategories(ctx context.Context) ([]ListStorefron
 
 const listStorefrontItems = `-- name: ListStorefrontItems :many
 SELECT mi.id, mi.category_id, mi.name, mi.description, mi.price_minor, mi.currency,
-       mi.available, mi.sort_order, COALESCE(ma.object_key, '')::text AS image_key
+       (mi.available AND (mi.sold_out_until IS NULL OR now() >= mi.sold_out_until)) AS available,
+       mi.sold_out_until, mi.sort_order, COALESCE(ma.object_key, '')::text AS image_key
 FROM menu_items mi
 LEFT JOIN media_assets ma ON ma.id = mi.image_asset_id AND ma.deleted_at IS NULL
 WHERE mi.deleted_at IS NULL
@@ -473,15 +561,16 @@ ORDER BY mi.sort_order ASC, mi.name ASC
 `
 
 type ListStorefrontItemsRow struct {
-	ID          uuid.UUID
-	CategoryID  uuid.UUID
-	Name        string
-	Description string
-	PriceMinor  int32
-	Currency    string
-	Available   bool
-	SortOrder   int32
-	ImageKey    string
+	ID           uuid.UUID
+	CategoryID   uuid.UUID
+	Name         string
+	Description  string
+	PriceMinor   int32
+	Currency     string
+	Available    *bool
+	SoldOutUntil pgtype.Timestamptz
+	SortOrder    int32
+	ImageKey     string
 }
 
 func (q *Queries) ListStorefrontItems(ctx context.Context) ([]ListStorefrontItemsRow, error) {
@@ -501,6 +590,7 @@ func (q *Queries) ListStorefrontItems(ctx context.Context) ([]ListStorefrontItem
 			&i.PriceMinor,
 			&i.Currency,
 			&i.Available,
+			&i.SoldOutUntil,
 			&i.SortOrder,
 			&i.ImageKey,
 		); err != nil {

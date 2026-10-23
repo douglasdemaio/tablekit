@@ -39,7 +39,8 @@ const getOrderByID = `-- name: GetOrderByID :one
 SELECT id, merchant_id, public_ref, customer_id, status, fulfilment, payment_method,
        payment_status, currency, subtotal_minor, tax_minor, delivery_fee_minor, total_minor,
        contact_name, contact_email, contact_phone, delivery_address, notes, scheduled_for,
-       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at
+       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at,
+       customer_account_id
 FROM orders
 WHERE id = $1
 `
@@ -74,6 +75,7 @@ func (q *Queries) GetOrderByID(ctx context.Context, id uuid.UUID) (Order, error)
 		&i.CancelledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomerAccountID,
 	)
 	return i, err
 }
@@ -104,9 +106,10 @@ const listOpenOrders = `-- name: ListOpenOrders :many
 SELECT id, merchant_id, public_ref, customer_id, status, fulfilment, payment_method,
        payment_status, currency, subtotal_minor, tax_minor, delivery_fee_minor, total_minor,
        contact_name, contact_email, contact_phone, delivery_address, notes, scheduled_for,
-       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at
+       placed_at, accepted_at, ready_at, completed_at, cancelled_at, created_at, updated_at,
+       customer_account_id
 FROM orders
-WHERE status NOT IN ('completed', 'cancelled', 'refunded', 'payment_failed', 'disputed')
+WHERE status NOT IN ('pending_payment', 'completed', 'cancelled', 'refunded', 'payment_failed', 'disputed')
 ORDER BY created_at ASC
 LIMIT 100
 `
@@ -147,6 +150,7 @@ func (q *Queries) ListOpenOrders(ctx context.Context) ([]Order, error) {
 			&i.CancelledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CustomerAccountID,
 		); err != nil {
 			return nil, err
 		}

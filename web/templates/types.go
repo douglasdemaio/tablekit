@@ -39,13 +39,28 @@ type Page struct {
 	MediaEnabled bool
 	CanStaff     bool
 	CanSettings  bool
+	CanOrders    bool
+	CanMenu      bool
+	CanDelivery  bool
+	CanSecurity  bool
 
-	Storefront   StorefrontView
-	Checkout     CheckoutView
-	Confirmation ConfirmationView
-	Settings     SettingsView
-	Staff        []StaffView
-	TeamSessions []TeamSessionView
+	CustomerSignedIn bool
+	CustomerName     string
+
+	Storefront    StorefrontView
+	Checkout      CheckoutView
+	Confirmation  ConfirmationView
+	Settings      SettingsView
+	Staff         []StaffView
+	TeamSessions  []TeamSessionView
+	Account       AccountView
+	Login         CustomerLoginView
+	AccountOrder  AccountOrderView
+	AccountOrders []AccountOrderView
+	LoginNotice   string
+	Deliveries    []DeliveryView
+	Drivers       []DriverOption
+	CanManageMenu bool
 }
 
 // StaffView is an employee row on the team page.
@@ -135,12 +150,14 @@ type OrderView struct {
 }
 
 type MenuItemView struct {
-	ID        string
-	Name      string
-	Price     string
-	Available bool
-	ImageURL  string
-	ThumbURL  string
+	ID           string
+	Name         string
+	Price        string
+	Available    bool
+	SoldOutUntil string
+	SoldOut      bool
+	ImageURL     string
+	ThumbURL     string
 }
 
 type MenuCategoryView struct {
@@ -172,6 +189,7 @@ type StorefrontItemView struct {
 	ImageURL    string
 	ThumbURL    string
 	Available   bool
+	SoldOutText string
 }
 
 // StorefrontCategoryView groups items.
@@ -185,8 +203,17 @@ type StorefrontCategoryView struct {
 type StorefrontView struct {
 	Name         string
 	Tagline      string
+	Description  string
+	Cuisine      string
+	Address      string
+	Phone        string
+	Email        string
 	Currency     string
 	PrimaryColor string
+	AccentColor  string
+	LogoURL      string
+	CoverURL     string
+	Template     string
 	Open         bool
 	Hours        []HourView
 	Menu         []StorefrontCategoryView
@@ -195,10 +222,122 @@ type StorefrontView struct {
 
 // CheckoutView is the guest checkout form.
 type CheckoutView struct {
-	Name     string
-	Open     bool
-	Currency string
-	Zones    []ZoneView
+	Name        string
+	Template    string
+	Open        bool
+	Currency    string
+	Zones       []ZoneView
+	SignedIn    bool
+	Customer    string
+	Email       string
+	Phone       string
+	Addresses   []AddressView
+	Slots       []SlotView
+	CardEnabled bool
+	SharedHere  bool
+}
+
+type AddressView struct {
+	ID        string
+	Label     string
+	Recipient string
+	Phone     string
+	Line1     string
+	Line2     string
+	Postcode  string
+	City      string
+	Country   string
+	Notes     string
+	IsDefault bool
+	Summary   string
+}
+
+type SlotView struct {
+	Value string
+	Label string
+}
+
+type AccountView struct {
+	Name       string
+	Email      string
+	Phone      string
+	Addresses  []AddressView
+	Shares     []ShareView
+	SharedHere bool
+	Restaurant string
+	Customer   bool
+}
+
+type ShareView struct {
+	MerchantID string
+	Name       string
+	URL        string
+	Created    string
+}
+
+type CustomerLoginView struct {
+	Next      string
+	DevNotice bool
+	Email     string
+}
+
+type AccountOrderView struct {
+	Ref         string
+	Status      string
+	StatusLabel string
+	Fulfilment  string
+	Payment     string
+	Total       string
+	Placed      string
+	Scheduled   string
+	Items       []ConfirmationLine
+	Subtotal    string
+	Fee         string
+	Tax         string
+	Code        string
+	Pickup      bool
+	Address     string
+	ContactName string
+}
+
+// BrandSettingsView is editable branding on the settings page.
+type BrandSettingsView struct {
+	Tagline        string
+	PrimaryColor   string
+	SecondaryColor string
+	AccentColor    string
+	Background     string
+	TextColor      string
+	Font           string
+	Template       string
+	LogoURL        string
+	CoverURL       string
+}
+
+// ProfileSettingsView is the public restaurant profile on the settings page.
+type ProfileSettingsView struct {
+	Name                string
+	LegalName           string
+	Description         string
+	Phone               string
+	Email               string
+	Street              string
+	Line2               string
+	Postcode            string
+	City                string
+	Country             string
+	Cuisine             string
+	Timezone            string
+	Locale              string
+	PickupEnabled       bool
+	SelfDeliveryEnabled bool
+}
+
+// PaymentSettingsView shows the restaurant's Stripe configuration state.
+type PaymentSettingsView struct {
+	Configured     bool
+	PublishableKey string
+	LiveMode       bool
 }
 
 // ConfirmationLine is a placed line on the confirmation page.
@@ -247,4 +386,35 @@ type SettingsView struct {
 	VATPercent string
 	Hours      []HourRow
 	Zones      []ZoneSettingView
+	Profile    ProfileSettingsView
+	Brand      BrandSettingsView
+	Payment    PaymentSettingsView
+	CanBrand   bool
+}
+
+// DeliveryView is one job in the driver queue.
+type DeliveryView struct {
+	ID          string
+	Ref         string
+	Status      string
+	StatusLabel string
+	Customer    string
+	Phone       string
+	Address     string
+	Notes       string
+	Scheduled   string
+	Total       string
+	Payment     string
+	Assignee    string
+	Claimed     bool
+	Mine        bool
+	CanClaim    bool
+	CanRelease  bool
+	CanHandoff  bool
+	CanAssign   bool
+}
+
+type DriverOption struct {
+	ID   string
+	Name string
 }

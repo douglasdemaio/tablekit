@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countMenuItems = `-- name: CountMenuItems :one
@@ -72,7 +73,7 @@ func (q *Queries) CreateMenuItem(ctx context.Context, arg CreateMenuItemParams) 
 }
 
 const getMenuItem = `-- name: GetMenuItem :one
-SELECT id, merchant_id, category_id, name, description, price_minor, currency, tax_rate_bp, image_asset_id, active, available, sort_order, created_at, updated_at, deleted_at FROM menu_items
+SELECT id, merchant_id, category_id, name, description, price_minor, currency, tax_rate_bp, image_asset_id, active, available, sort_order, created_at, updated_at, deleted_at, sold_out_until, sold_out_reason FROM menu_items
 WHERE id = $1::uuid
   AND deleted_at IS NULL
 `
@@ -96,6 +97,8 @@ func (q *Queries) GetMenuItem(ctx context.Context, dollar_1 uuid.UUID) (MenuItem
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.SoldOutUntil,
+		&i.SoldOutReason,
 	)
 	return i, err
 }
@@ -139,21 +142,41 @@ func (q *Queries) ListMenuCategories(ctx context.Context) ([]MenuCategory, error
 
 const listMenuItems = `-- name: ListMenuItems :many
 SELECT id, merchant_id, category_id, name, description, price_minor, currency, tax_rate_bp,
-       image_asset_id, active, available, sort_order, created_at, updated_at, deleted_at
+       image_asset_id, active, available, sold_out_until, sold_out_reason, sort_order, created_at, updated_at, deleted_at
 FROM menu_items
 WHERE deleted_at IS NULL
 ORDER BY sort_order ASC, name ASC
 `
 
-func (q *Queries) ListMenuItems(ctx context.Context) ([]MenuItem, error) {
+type ListMenuItemsRow struct {
+	ID            uuid.UUID
+	MerchantID    uuid.UUID
+	CategoryID    uuid.UUID
+	Name          string
+	Description   string
+	PriceMinor    int32
+	Currency      string
+	TaxRateBp     int32
+	ImageAssetID  *uuid.UUID
+	Active        bool
+	Available     bool
+	SoldOutUntil  pgtype.Timestamptz
+	SoldOutReason string
+	SortOrder     int32
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	DeletedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ListMenuItems(ctx context.Context) ([]ListMenuItemsRow, error) {
 	rows, err := q.db.Query(ctx, listMenuItems)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []MenuItem{}
+	items := []ListMenuItemsRow{}
 	for rows.Next() {
-		var i MenuItem
+		var i ListMenuItemsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.MerchantID,
@@ -166,6 +189,8 @@ func (q *Queries) ListMenuItems(ctx context.Context) ([]MenuItem, error) {
 			&i.ImageAssetID,
 			&i.Active,
 			&i.Available,
+			&i.SoldOutUntil,
+			&i.SoldOutReason,
 			&i.SortOrder,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -210,6 +235,23 @@ type SetMenuItemImageParams struct {
 
 func (q *Queries) SetMenuItemImage(ctx context.Context, arg SetMenuItemImageParams) error {
 	_, err := q.db.Exec(ctx, setMenuItemImage, arg.ImageAssetID, arg.ID)
+	return err
+}
+
+const setMenuItemSoldOut = `-- name: SetMenuItemSoldOut :exec
+UPDATE menu_items
+SET sold_out_until = $1, sold_out_reason = $2, updated_at = now()
+WHERE id = $3
+`
+
+type SetMenuItemSoldOutParams struct {
+	SoldOutUntil  pgtype.Timestamptz
+	SoldOutReason string
+	ID            uuid.UUID
+}
+
+func (q *Queries) SetMenuItemSoldOut(ctx context.Context, arg SetMenuItemSoldOutParams) error {
+	_, err := q.db.Exec(ctx, setMenuItemSoldOut, arg.SoldOutUntil, arg.SoldOutReason, arg.ID)
 	return err
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"tablekit.de/tablekit/internal/auth"
+	"tablekit.de/tablekit/internal/customer"
 	"tablekit.de/tablekit/internal/db/sqlcgen"
 	"tablekit.de/tablekit/internal/storefront"
 	"tablekit.de/tablekit/internal/tenant"
@@ -48,18 +50,38 @@ func (s *Server) handleCheckoutPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	cid, ok := customer.FromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/account/login?next=%2Fcheckout", http.StatusSeeOther)
+		return
+	}
 	sf, err := s.storefrontSvc.Load(r.Context(), m.ID)
 	if err != nil {
 		s.log.Error("load storefront", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	addresses, err := s.customerSvc.ListAddresses(r.Context(), cid.Account.ID)
+	if err != nil {
+		s.log.Error("list checkout addresses", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	p := s.page(r, "checkout.title")
+	p.Nav = "checkout"
 	p.Checkout = templates.CheckoutView{
-		Name:     sf.Settings.Name,
-		Open:     sf.Open,
-		Currency: sf.Settings.Currency,
-		Zones:    s.zoneViews(sf.Zones, sf.Settings.Currency),
+		Name:        sf.Settings.Name,
+		Open:        sf.Open,
+		Currency:    sf.Settings.Currency,
+		Zones:       s.zoneViews(sf.Zones, sf.Settings.Currency),
+		SignedIn:    true,
+		Customer:    displayName(cid.Account.Name, cid.Account.Email),
+		Email:       cid.Account.Email,
+		Phone:       cid.Account.Phone,
+		Addresses:   s.addressViews(addresses),
+		Slots:       s.slotViews(sf, time.Now()),
+		CardEnabled: sf.Settings.CardEnabled,
+		SharedHere:  s.customerSvc.HasShared(r.Context(), cid.Account.ID, m.ID),
 	}
 	s.render(w, r, http.StatusOK, templates.CheckoutPage(p))
 }
@@ -72,6 +94,11 @@ func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.auth.Limiter.Allow("order:ip:"+s.clientIP(r), 10, 10*time.Minute) {
 		s.renderCheckoutError(w, r, m.ID, "checkout.error.toomany")
+		return
+	}
+	cid, ok := customer.FromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/account/login?next=%2Fcheckout", http.StatusSeeOther)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -92,13 +119,62 @@ func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 		s.renderCheckoutError(w, r, m.ID, "checkout.error.invalid")
 		return
 	}
+	address := storefront.DeliveryAddress{
+		Recipient: firstNonEmpty(r.PostFormValue("recipient"), cid.Account.Name),
+		Phone:     firstNonEmpty(r.PostFormValue("delivery_phone"), r.PostFormValue("phone"), cid.Account.Phone),
+		Line1:     r.PostFormValue("line1"),
+		Line2:     r.PostFormValue("line2"),
+		Postcode:  r.PostFormValue("postcode"),
+		City:      r.PostFormValue("city"),
+		Country:   firstNonEmpty(r.PostFormValue("country"), "DE"),
+		Notes:     r.PostFormValue("delivery_notes"),
+	}
+	if addressID := r.PostFormValue("address_id"); addressID != "" && fulfilment == sqlcgen.FulfilmentModeSelfDelivery {
+		if aid, parseErr := uuid.Parse(addressID); parseErr == nil {
+			if saved, getErr := s.customerSvc.Address(r.Context(), cid.Account.ID, aid); getErr == nil {
+				address = storefront.DeliveryAddress{
+					Recipient: saved.Recipient, Phone: saved.Phone, Line1: saved.Line1,
+					Line2: saved.Line2, Postcode: saved.Postcode, City: saved.City,
+					Country: saved.Country, Notes: saved.DeliveryNotes,
+				}
+			}
+		}
+		if address.Line1 == "" {
+			s.renderCheckoutError(w, r, m.ID, "checkout.error.address")
+			return
+		}
+	}
+	scheduled := time.Time{}
+	if raw := strings.TrimSpace(r.PostFormValue("scheduled_for")); raw != "" && raw != "asap" {
+		loc := time.Now().Location()
+		if profile, pErr := s.storefrontSvc.MerchantProfile(r.Context(), m.ID); pErr == nil {
+			if tz, tzErr := time.LoadLocation(profile.Timezone); tzErr == nil {
+				loc = tz
+			}
+		}
+		if t, parseErr := time.ParseInLocation("2006-01-02T15:04", raw, loc); parseErr == nil {
+			scheduled = t
+		} else {
+			s.renderCheckoutError(w, r, m.ID, "checkout.error.slot")
+			return
+		}
+	}
+	payment := r.PostFormValue("payment")
+	if payment != "card" {
+		payment = "cash"
+	}
 	placed, err := s.storefrontSvc.PlaceOrder(r.Context(), m.ID, storefront.OrderInput{
-		Name:       r.PostFormValue("name"),
-		Fulfilment: fulfilment,
-		Postcode:   r.PostFormValue("postcode"),
-		Address:    r.PostFormValue("address"),
-		Notes:      r.PostFormValue("notes"),
-		Lines:      lines,
+		CustomerID:   cid.Account.ID,
+		Name:         firstNonEmpty(r.PostFormValue("name"), cid.Account.Name),
+		Email:        cid.Account.Email,
+		Phone:        firstNonEmpty(pickupPhone(fulfilment, address), cid.Account.Phone),
+		Fulfilment:   fulfilment,
+		Payment:      payment,
+		Address:      address,
+		Notes:        r.PostFormValue("notes"),
+		ScheduledFor: scheduled,
+		ShareProfile: r.PostFormValue("share_profile") == "1",
+		Lines:        lines,
 	})
 	if err != nil {
 		s.log.Warn("guest order rejected", "error", err)
@@ -116,6 +192,16 @@ func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 		default:
 			s.renderCheckoutError(w, r, m.ID, "checkout.error.invalid")
 		}
+		return
+	}
+	if placed.Card {
+		checkoutURL, payErr := s.createStripeCheckout(r, m, cid, placed)
+		if payErr != nil {
+			s.log.Error("create stripe checkout", "error", payErr)
+			s.renderCheckoutError(w, r, m.ID, "checkout.error.payment")
+			return
+		}
+		http.Redirect(w, r, checkoutURL, http.StatusSeeOther)
 		return
 	}
 	if placed.Pickup {
@@ -139,6 +225,15 @@ func (s *Server) handleOrderConfirmation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ref := chi.URLParam(r, "ref")
+	if cid, ok := customer.FromContext(r.Context()); ok {
+		if _, err := s.customerSvc.OrderByRef(r.Context(), m.ID, cid.Account.ID, ref); err != nil {
+			http.NotFound(w, r)
+			return
+		}
+	} else if order, err := s.storefrontSvc.OrderByRef(r.Context(), m.ID, ref); err != nil || order.Order.CustomerAccountID != nil {
+		http.Redirect(w, r, "/account/login?next="+url.QueryEscape("/orders/"+ref), http.StatusSeeOther)
+		return
+	}
 	order, err := s.storefrontSvc.OrderByRef(r.Context(), m.ID, ref)
 	if err != nil {
 		http.NotFound(w, r)
@@ -185,7 +280,29 @@ func (s *Server) handleOrderHandoff(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard/orders?error=code", http.StatusSeeOther)
 		return
 	}
-	if err := s.storefrontSvc.VerifyPickup(r.Context(), id.Merchant.ID, id.Staff.ID, orderID, r.PostFormValue("code")); err != nil {
+	order, orderErr := s.storefrontSvc.OrderByID(r.Context(), id.Merchant.ID, orderID)
+	if orderErr != nil {
+		http.Redirect(w, r, "/dashboard/orders?error=notfound", http.StatusSeeOther)
+		return
+	}
+	if id.Role() == auth.RoleDriver && order.Fulfilment != sqlcgen.FulfilmentModeSelfDelivery {
+		http.Redirect(w, r, "/dashboard/orders?error=notfound", http.StatusSeeOther)
+		return
+	}
+	if id.Role() == auth.RoleDriver {
+		job, jobErr := s.storefrontSvc.DeliveryFor(r.Context(), id.Merchant.ID, orderID)
+		if jobErr != nil || job.AssigneeStaffID == nil || *job.AssigneeStaffID != id.Staff.ID {
+			http.Redirect(w, r, "/dashboard/orders?error=notfound", http.StatusSeeOther)
+			return
+		}
+	}
+	var verifyErr error
+	if order.Fulfilment == sqlcgen.FulfilmentModeSelfDelivery {
+		verifyErr = s.storefrontSvc.VerifyDelivery(r.Context(), id.Merchant.ID, id.Staff.ID, orderID, r.PostFormValue("code"))
+	} else {
+		verifyErr = s.storefrontSvc.VerifyPickup(r.Context(), id.Merchant.ID, id.Staff.ID, orderID, r.PostFormValue("code"))
+	}
+	if err := verifyErr; err != nil {
 		switch {
 		case errors.Is(err, storefront.ErrNotReady):
 			http.Redirect(w, r, "/dashboard/orders?error=ready", http.StatusSeeOther)
@@ -206,23 +323,52 @@ func (s *Server) renderCheckoutError(w http.ResponseWriter, r *http.Request, mer
 		return
 	}
 	p := s.page(r, key)
-	p.Checkout = templates.CheckoutView{
-		Name:     sf.Settings.Name,
-		Open:     sf.Open,
-		Currency: sf.Settings.Currency,
-		Zones:    s.zoneViews(sf.Zones, sf.Settings.Currency),
+	cid, signed := customer.FromContext(r.Context())
+	view := templates.CheckoutView{
+		Name:        sf.Settings.Name,
+		Template:    sf.Settings.Template,
+		Open:        sf.Open,
+		Currency:    sf.Settings.Currency,
+		Zones:       s.zoneViews(sf.Zones, sf.Settings.Currency),
+		SignedIn:    signed,
+		Slots:       s.slotViews(sf, time.Now()),
+		CardEnabled: sf.Settings.CardEnabled,
 	}
+	if signed {
+		view.Customer = displayName(cid.Account.Name, cid.Account.Email)
+		view.Email = cid.Account.Email
+		view.Phone = cid.Account.Phone
+		view.SharedHere = s.customerSvc.HasShared(r.Context(), cid.Account.ID, merchantID)
+		if addresses, err := s.customerSvc.ListAddresses(r.Context(), cid.Account.ID); err == nil {
+			view.Addresses = s.addressViews(addresses)
+		}
+	}
+	p.Checkout = view
 	s.render(w, r, http.StatusBadRequest, templates.CheckoutPage(p))
 }
 
 func (s *Server) storefrontView(r *http.Request, sf storefront.Storefront) templates.StorefrontView {
+	address := strings.TrimSpace(strings.Join([]string{sf.Settings.Street, sf.Settings.Line2, sf.Settings.Postcode + " " + sf.Settings.City}, " "))
 	view := templates.StorefrontView{
 		Name:         sf.Settings.Name,
 		Tagline:      sf.Settings.Tagline,
+		Description:  sf.Settings.Description,
+		Cuisine:      sf.Settings.Cuisine,
+		Address:      strings.TrimSpace(address),
+		Phone:        sf.Settings.Phone,
+		Email:        sf.Settings.Email,
 		Currency:     sf.Settings.Currency,
 		PrimaryColor: sf.Settings.PrimaryColor,
+		AccentColor:  sf.Settings.AccentColor,
+		Template:     sf.Settings.Template,
 		Open:         sf.Open,
 		Zones:        s.zoneViews(sf.Zones, sf.Settings.Currency),
+	}
+	if sf.Settings.LogoKey != "" {
+		view.LogoURL = s.mediaSvc.URL(sf.Settings.LogoKey)
+	}
+	if sf.Settings.CoverKey != "" {
+		view.CoverURL = s.mediaSvc.URL(sf.Settings.CoverKey)
 	}
 	for _, h := range sf.Hours {
 		view.Hours = append(view.Hours, templates.HourView{
@@ -239,6 +385,9 @@ func (s *Server) storefrontView(r *http.Request, sf storefront.Storefront) templ
 				Description: it.Description,
 				Price:       formatMoney(int64(it.PriceMinor), sf.Settings.Currency),
 				Available:   it.Available,
+			}
+			if !it.Available {
+				iv.SoldOutText = s.tr(r, "storefront.sold_out")
 			}
 			if it.ImageKey != "" {
 				iv.ImageURL = s.mediaSvc.URL(it.ImageKey)
@@ -265,6 +414,42 @@ func (s *Server) zoneViews(zones []storefront.Zone, currency string) []templates
 		})
 	}
 	return out
+}
+
+func (s *Server) slotViews(sf storefront.Storefront, now time.Time) []templates.SlotView {
+	loc := sf.Settings.Timezone
+	now = now.In(loc)
+	out := make([]templates.SlotView, 0, 48)
+	for _, slot := range storefront.Slots(sf.Hours, now, 7*24*2) {
+		out = append(out, templates.SlotView{
+			Value: slot.Format("2006-01-02T15:04"),
+			Label: slot.Format("Mon 02 Jan 15:04"),
+		})
+	}
+	return out
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func pickupPhone(f sqlcgen.FulfilmentModeEnum, a storefront.DeliveryAddress) string {
+	if f == sqlcgen.FulfilmentModeSelfDelivery {
+		return a.Phone
+	}
+	return ""
+}
+
+func displayName(name, email string) string {
+	if strings.TrimSpace(name) != "" {
+		return name
+	}
+	return email
 }
 
 type cartLine struct {

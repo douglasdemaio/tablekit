@@ -70,6 +70,29 @@ templ MenuPage(p Page) {
 													}
 												</button>
 											</form>
+											if it.SoldOut {
+												<span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-900">{ p.T("menu.sold_out_until") } { it.SoldOutUntil }</span>
+												<form method="post" action={ templ.SafeURL("/dashboard/menu/items/" + it.ID + "/sold-out/clear") }>
+													<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+													<button class="text-sm text-amber-800 hover:underline" type="submit">{ p.T("menu.sold_out_clear") }</button>
+												</form>
+											} else {
+												<details class="text-sm">
+													<summary class="cursor-pointer text-stone-600">{ p.T("menu.sold_out") }</summary>
+													<form method="post" action={ templ.SafeURL("/dashboard/menu/items/" + it.ID + "/sold-out") } class="mt-2 flex flex-wrap items-end gap-2">
+														<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+														<select name="preset" class="rounded-lg border border-stone-300 px-2 py-1.5 text-sm">
+															<option value="today">{ p.T("menu.sold_out_today") }</option>
+															<option value="evening">{ p.T("menu.sold_out_evening") }</option>
+															<option value="tomorrow">{ p.T("menu.sold_out_tomorrow") }</option>
+															<option value="custom">{ p.T("menu.sold_out_custom") }</option>
+														</select>
+														<input type="datetime-local" name="until" class="rounded-lg border border-stone-300 px-2 py-1.5 text-sm"/>
+														<input name="reason" maxlength="200" placeholder={ p.T("menu.sold_out_reason") } class="w-40 rounded-lg border border-stone-300 px-2 py-1.5 text-sm"/>
+														<button class="rounded-lg border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100" type="submit">{ p.T("common.save") }</button>
+													</form>
+												</details>
+											}
 											<form method="post" action={ templ.SafeURL("/dashboard/menu/items/" + it.ID + "/delete") }>
 												<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
 												<button class="text-sm text-red-700 hover:underline" type="submit">{ p.T("menu.delete") }</button>

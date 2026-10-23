@@ -28,8 +28,16 @@ type Config struct {
 
 	EncryptionKey []byte
 
-	SessionTTL    time.Duration
-	MFAPendingTTL time.Duration
+	SessionTTL         time.Duration
+	CustomerSessionTTL time.Duration
+	MFAPendingTTL      time.Duration
+
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+	SMTPTLS      bool
 
 	WebAuthnRPID    string
 	WebAuthnRPName  string
@@ -117,12 +125,28 @@ func Load() (*Config, error) {
 	if c.MFAPendingTTL, err = durationEnv("TABLEKIT_MFA_PENDING_TTL", 10*time.Minute); err != nil {
 		return nil, err
 	}
+	if c.CustomerSessionTTL, err = durationEnv("TABLEKIT_CUSTOMER_SESSION_TTL", 30*24*time.Hour); err != nil {
+		return nil, err
+	}
+	if c.CustomerSessionTTL < time.Hour || c.CustomerSessionTTL > 90*24*time.Hour {
+		return nil, errors.New("TABLEKIT_CUSTOMER_SESSION_TTL must be between 1h and 2160h")
+	}
 	if c.SessionTTL < time.Minute || c.SessionTTL > 30*24*time.Hour {
 		return nil, errors.New("TABLEKIT_SESSION_TTL must be between 1m and 720h")
 	}
 	if c.MFAPendingTTL < time.Minute || c.MFAPendingTTL > time.Hour {
 		return nil, errors.New("TABLEKIT_MFA_PENDING_TTL must be between 1m and 1h")
 	}
+
+	c.SMTPHost = strings.TrimSpace(os.Getenv("TABLEKIT_SMTP_HOST"))
+	c.SMTPPort = intEnv("TABLEKIT_SMTP_PORT", 587)
+	c.SMTPUsername = strings.TrimSpace(os.Getenv("TABLEKIT_SMTP_USERNAME"))
+	c.SMTPPassword = os.Getenv("TABLEKIT_SMTP_PASSWORD")
+	c.SMTPFrom = strings.TrimSpace(os.Getenv("TABLEKIT_SMTP_FROM"))
+	if c.SMTPFrom == "" {
+		c.SMTPFrom = "tablekit <no-reply@" + c.BaseDomain + ">"
+	}
+	c.SMTPTLS = boolEnv("TABLEKIT_SMTP_TLS", true)
 
 	c.CookieSecure = boolEnv("TABLEKIT_COOKIE_SECURE", c.IsProduction())
 	c.BillingEnabled = boolEnv("TABLEKIT_BILLING_ENABLED", false)
@@ -189,6 +213,18 @@ func durationEnv(key string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}
 	return d, nil
+}
+
+func intEnv(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return v
 }
 
 func boolEnv(key string, fallback bool) bool {

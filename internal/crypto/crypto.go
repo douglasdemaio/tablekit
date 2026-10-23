@@ -95,11 +95,29 @@ func HashPassword(password string) (string, error) {
 	if len(password) > 1024 {
 		return "", errors.New("crypto: password is too long")
 	}
+	return hashSecret(password)
+}
+
+// HashPin hashes a short numeric one-time code. It uses the same Argon2id
+// parameters as passwords but does not impose a minimum length.
+func HashPin(pin string) (string, error) {
+	if pin == "" || len(pin) > 32 {
+		return "", errors.New("crypto: invalid pin")
+	}
+	return hashSecret(pin)
+}
+
+// VerifyPin checks a one-time code against an Argon2id hash.
+func VerifyPin(pin, encoded string) (bool, error) {
+	return VerifyPassword(pin, encoded)
+}
+
+func hashSecret(secret string) (string, error) {
 	salt := make([]byte, argonSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := argon2.IDKey([]byte(password), salt, argonIterations, argonMemory, argonParallelism, argonKeyLength)
+	key := argon2.IDKey([]byte(secret), salt, argonIterations, argonMemory, argonParallelism, argonKeyLength)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, argonMemory, argonIterations, argonParallelism,
 		base64.RawStdEncoding.EncodeToString(salt),

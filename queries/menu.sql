@@ -6,7 +6,7 @@ ORDER BY sort_order ASC, name ASC;
 
 -- name: ListMenuItems :many
 SELECT id, merchant_id, category_id, name, description, price_minor, currency, tax_rate_bp,
-       image_asset_id, active, available, sort_order, created_at, updated_at, deleted_at
+       image_asset_id, active, available, sold_out_until, sold_out_reason, sort_order, created_at, updated_at, deleted_at
 FROM menu_items
 WHERE deleted_at IS NULL
 ORDER BY sort_order ASC, name ASC;
@@ -40,6 +40,12 @@ WHERE id = $2;
 UPDATE menu_items
 SET available = $1, updated_at = now()
 WHERE id = $2;
+
+-- name: SetMenuItemSoldOut :exec
+UPDATE menu_items
+SET sold_out_until = $1, sold_out_reason = $2, updated_at = now()
+WHERE id = $3;
+
 
 -- name: SoftDeleteMenuItem :exec
 UPDATE menu_items

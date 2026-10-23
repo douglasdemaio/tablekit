@@ -8,6 +8,7 @@ import (
 	"github.com/a-h/templ"
 
 	"tablekit.de/tablekit/internal/auth"
+	"tablekit.de/tablekit/internal/customer"
 	"tablekit.de/tablekit/internal/i18n"
 	"tablekit.de/tablekit/internal/tenant"
 	"tablekit.de/tablekit/web/templates"
@@ -43,6 +44,17 @@ func (s *Server) page(r *http.Request, titleKey string) templates.Page {
 		p.TOTPEnabled = id.Staff.TotpEnabled
 		p.CanStaff = id.Can(auth.PermStaffManage)
 		p.CanSettings = id.Can(auth.PermSettings)
+		p.CanOrders = id.Can(auth.PermOrdersView)
+		p.CanMenu = id.Can(auth.PermMenuManage)
+		p.CanDelivery = id.Can(auth.PermDelivery)
+		p.CanSecurity = id.Can(auth.PermSecurity)
+	}
+	if id, ok := customer.FromContext(r.Context()); ok {
+		p.CustomerSignedIn = true
+		p.CustomerName = id.Account.Name
+		if p.CustomerName == "" {
+			p.CustomerName = id.Account.Email
+		}
 	}
 	return p
 }

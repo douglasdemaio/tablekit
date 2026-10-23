@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -51,6 +52,9 @@ func (s *Server) menuPage(r *http.Request) (templates.Page, error) {
 	if r.URL.Query().Get("image") == "1" {
 		p.Notice = s.tr(r, "menu.image_saved")
 	}
+	if r.URL.Query().Get("soldout") == "1" {
+		p.Notice = s.tr(r, "menu.sold_out_saved")
+	}
 
 	categories, err := s.menuSvc.List(r.Context(), id.Merchant.ID)
 	if err != nil {
@@ -61,10 +65,12 @@ func (s *Server) menuPage(r *http.Request) (templates.Page, error) {
 		view := templates.MenuCategoryView{ID: c.Category.ID.String(), Name: c.Category.Name}
 		for _, item := range c.Items {
 			mv := templates.MenuItemView{
-				ID:        item.ID.String(),
-				Name:      item.Name,
-				Price:     priceInput(item.PriceMinor),
-				Available: item.Available,
+				ID:           item.ID.String(),
+				Name:         item.Name,
+				Price:        priceInput(item.PriceMinor),
+				Available:    item.Available,
+				SoldOutUntil: formatTime(item.SoldOutUntil),
+				SoldOut:      item.SoldOutUntil.Valid && time.Now().Before(item.SoldOutUntil.Time),
 			}
 			if item.ImageAssetID != nil {
 				if key, err := s.mediaSvc.ObjectKey(r.Context(), id.Merchant.ID, *item.ImageAssetID); err == nil {
@@ -258,6 +264,64 @@ func (s *Server) handleMenuToggleAvailability(w http.ResponseWriter, r *http.Req
 		return
 	}
 	s.audit(r, id.Merchant.ID, "staff", &id.Staff.ID, "menu.item_availability", "menu_item", itemID.String(), s.clientIP(r), nil)
+	http.Redirect(w, r, "/dashboard/menu?saved=1", http.StatusSeeOther)
+}
+
+func (s *Server) handleMenuSoldOut(w http.ResponseWriter, r *http.Request) {
+	id, _ := auth.FromContext(r.Context())
+	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.renderMenuError(w, r, "menu.error.name")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.renderMenuError(w, r, "menu.error.name")
+		return
+	}
+	loc, _ := time.LoadLocation("Europe/Berlin")
+	if loc == nil {
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+	var until time.Time
+	switch r.PostFormValue("preset") {
+	case "today":
+		until = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 0, 0, loc)
+	case "evening":
+		until = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 0, 0, loc)
+	case "tomorrow":
+		until = time.Date(now.Year(), now.Month(), now.Day()+1, 11, 0, 0, 0, loc)
+	case "custom":
+		t, err := time.ParseInLocation("2006-01-02T15:04", r.PostFormValue("until"), loc)
+		if err != nil {
+			s.renderMenuError(w, r, "menu.error.sold_out")
+			return
+		}
+		until = t
+	default:
+		s.renderMenuError(w, r, "menu.error.sold_out")
+		return
+	}
+	if err := s.menuSvc.SetSoldOut(r.Context(), id.Merchant.ID, itemID, until, strings.TrimSpace(r.PostFormValue("reason"))); err != nil {
+		s.renderMenuError(w, r, "menu.error.sold_out")
+		return
+	}
+	s.audit(r, id.Merchant.ID, "staff", &id.Staff.ID, "menu.item_sold_out", "menu_item", itemID.String(), s.clientIP(r), nil)
+	http.Redirect(w, r, "/dashboard/menu?soldout=1", http.StatusSeeOther)
+}
+
+func (s *Server) handleMenuSoldOutClear(w http.ResponseWriter, r *http.Request) {
+	id, _ := auth.FromContext(r.Context())
+	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.renderMenuError(w, r, "menu.error.name")
+		return
+	}
+	if err := s.menuSvc.ClearSoldOut(r.Context(), id.Merchant.ID, itemID); err != nil {
+		s.renderMenuError(w, r, "menu.error.sold_out")
+		return
+	}
+	s.audit(r, id.Merchant.ID, "staff", &id.Staff.ID, "menu.item_available", "menu_item", itemID.String(), s.clientIP(r), nil)
 	http.Redirect(w, r, "/dashboard/menu?saved=1", http.StatusSeeOther)
 }
 

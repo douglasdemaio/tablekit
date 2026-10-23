@@ -15,6 +15,10 @@ import (
 
 func (s *Server) handleOrdersPage(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.FromContext(r.Context())
+	if id.Role() == auth.RoleDriver {
+		s.handleDeliveryPage(w, r, id)
+		return
+	}
 	p := s.page(r, "orders.title")
 	p.Nav = "orders"
 

@@ -31,6 +31,12 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		p.Notice = s.tr(r, "settings.zone_saved")
 	case "zone_deleted":
 		p.Notice = s.tr(r, "settings.zone_deleted")
+	case "profile":
+		p.Notice = s.tr(r, "settings.profile_saved")
+	case "branding":
+		p.Notice = s.tr(r, "settings.branding_saved")
+	case "payments":
+		p.Notice = s.tr(r, "settings.payments_saved")
 	}
 	switch r.URL.Query().Get("error") {
 	case "vat":
@@ -39,8 +45,28 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		p.Error = s.tr(r, "settings.error.hours")
 	case "zone":
 		p.Error = s.tr(r, "settings.error.zone")
+	case "profile":
+		p.Error = s.tr(r, "settings.error.profile")
+	case "branding":
+		p.Error = s.tr(r, "settings.error.branding")
+	case "payments":
+		p.Error = s.tr(r, "settings.error.payments")
+	case "image_size":
+		p.Error = s.tr(r, "menu.error.image_size")
+	case "image_type":
+		p.Error = s.tr(r, "menu.error.image_type")
+	case "storage":
+		p.Error = s.tr(r, "menu.error.image_storage")
 	}
 	p.Settings = s.settingsView(r, settings, hours, zones)
+	extras, ok := s.loadSettingsExtras(w, r)
+	if !ok {
+		return
+	}
+	p.Settings.Profile = extras.Profile
+	p.Settings.Brand = extras.Brand
+	p.Settings.Payment = extras.Payment
+	p.Settings.CanBrand = extras.CanBrand
 	s.render(w, r, http.StatusOK, templates.SettingsPage(p))
 }
 

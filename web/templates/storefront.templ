@@ -4,14 +4,26 @@ import "strconv"
 
 templ StorefrontPage(p Page) {
 	@Layout(p) {
-		<div data-page="storefront" data-slug={ p.MerchantSlug }>
-			<section class="rounded-3xl border border-stone-200 bg-white p-8">
+		<div data-page="storefront" data-slug={ p.MerchantSlug } data-template={ p.Storefront.Template }>
+			<section class="overflow-hidden rounded-3xl border border-stone-200 bg-white">
+				if p.Storefront.CoverURL != "" {
+					<img src={ p.Storefront.CoverURL } alt="" class="h-48 w-full object-cover"/>
+				}
+				<div class="p-8">
 				<div class="flex flex-wrap items-start justify-between gap-4">
-					<div>
-						<h1 class="text-4xl font-semibold tracking-tight">{ p.Storefront.Name }</h1>
-						if p.Storefront.Tagline != "" {
-							<p class="mt-2 max-w-2xl text-stone-600">{ p.Storefront.Tagline }</p>
+					<div class="flex items-start gap-4">
+						if p.Storefront.LogoURL != "" {
+							<img src={ p.Storefront.LogoURL } alt="" class="h-16 w-16 rounded-2xl object-cover"/>
 						}
+						<div>
+							<h1 class="text-4xl font-semibold tracking-tight">{ p.Storefront.Name }</h1>
+							if p.Storefront.Tagline != "" {
+								<p class="mt-2 max-w-2xl text-stone-600">{ p.Storefront.Tagline }</p>
+							}
+							if p.Storefront.Cuisine != "" {
+								<p class="mt-1 text-sm uppercase tracking-wide text-stone-500">{ p.Storefront.Cuisine }</p>
+							}
+						</div>
 					</div>
 					if p.Storefront.Open {
 						<span class="rounded-full bg-emerald-100 px-3 py-1 text-sm font-medium text-emerald-800">{ p.T("storefront.open") }</span>
@@ -21,6 +33,22 @@ templ StorefrontPage(p Page) {
 				</div>
 				if !p.Storefront.Open {
 					<p class="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800">{ p.T("storefront.closed_notice") }</p>
+				}
+				if p.Storefront.Description != "" {
+					<p class="mt-4 max-w-3xl text-stone-600">{ p.Storefront.Description }</p>
+				}
+				if p.Storefront.Address != "" || p.Storefront.Phone != "" || p.Storefront.Email != "" {
+					<div class="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-sm text-stone-600">
+						if p.Storefront.Address != "" {
+							<span>{ p.Storefront.Address }</span>
+						}
+						if p.Storefront.Phone != "" {
+							<a class="underline" href={ "tel:" + p.Storefront.Phone }>{ p.Storefront.Phone }</a>
+						}
+						if p.Storefront.Email != "" {
+							<a class="underline" href={ "mailto:" + p.Storefront.Email }>{ p.Storefront.Email }</a>
+						}
+					</div>
 				}
 				if len(p.Storefront.Hours) > 0 {
 					<div class="mt-6 grid gap-1 text-sm text-stone-600 sm:grid-cols-2">
@@ -39,6 +67,7 @@ templ StorefrontPage(p Page) {
 						</ul>
 					</div>
 				}
+				</div>
 			</section>
 
 			if len(p.Storefront.Menu) == 0 {
@@ -75,7 +104,7 @@ templ StorefrontPage(p Page) {
 															{ p.T("storefront.add") }
 														</button>
 													} else {
-														<span class="text-sm text-stone-500">{ p.T("storefront.unavailable") }</span>
+														<span class="text-sm text-stone-500">{ it.SoldOutText }</span>
 													}
 												</div>
 											</div>
@@ -110,7 +139,7 @@ templ StorefrontPage(p Page) {
 
 templ CheckoutPage(p Page) {
 	@Layout(p) {
-		<div data-page="checkout" data-slug={ p.MerchantSlug }>
+		<div data-page="checkout" data-slug={ p.MerchantSlug } data-template={ p.Checkout.Template }>
 			<h1 class="text-3xl font-semibold tracking-tight">{ p.T("checkout.title") }</h1>
 			<p class="mt-2 text-stone-600">{ p.T("checkout.subtitle") }</p>
 
@@ -123,10 +152,20 @@ templ CheckoutPage(p Page) {
 					<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
 					<input type="hidden" name="cart" value=""/>
 
-					<div>
-						<label class="block text-sm font-medium" for="name">{ p.T("checkout.name") }</label>
-						<input id="name" name="name" required maxlength="120" autocomplete="name"
-							class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2" placeholder={ p.T("checkout.name_placeholder") }/>
+					<div class="rounded-lg bg-stone-50 px-4 py-3 text-sm text-stone-600">
+						{ p.T("checkout.signed_in_as") } <span class="font-medium text-stone-900">{ p.Checkout.Customer }</span>
+					</div>
+					<div class="grid gap-3 sm:grid-cols-2">
+						<div>
+							<label class="block text-sm font-medium" for="name">{ p.T("checkout.name") }</label>
+							<input id="name" name="name" required maxlength="120" autocomplete="name"
+								class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2" placeholder={ p.T("checkout.name_placeholder") }/>
+						</div>
+						<div>
+							<label class="block text-sm font-medium" for="phone">{ p.T("account.phone") }</label>
+							<input id="phone" name="phone" value={ p.Checkout.Phone } maxlength="40" autocomplete="tel"
+								class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+						</div>
 					</div>
 
 					<fieldset>
@@ -145,15 +184,42 @@ templ CheckoutPage(p Page) {
 						</div>
 						if len(p.Checkout.Zones) > 0 {
 							<div class="mt-3 space-y-3" data-delivery-fields hidden>
-								<div>
-									<label class="block text-sm font-medium" for="postcode">{ p.T("checkout.postcode") }</label>
-									<input id="postcode" name="postcode" maxlength="10" autocomplete="postal-code"
-										class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
-								</div>
-								<div>
-									<label class="block text-sm font-medium" for="address">{ p.T("checkout.address") }</label>
-									<input id="address" name="address" maxlength="500" autocomplete="street-address"
-										class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+								if len(p.Checkout.Addresses) > 0 {
+									<div>
+										<label class="block text-sm font-medium" for="address_id">{ p.T("checkout.saved_address") }</label>
+										<select id="address_id" name="address_id" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2">
+											for _, a := range p.Checkout.Addresses {
+												<option value={ a.ID } selected?={ a.IsDefault }>{ a.Label } — { a.Summary }</option>
+											}
+											<option value="">{ p.T("checkout.new_address") }</option>
+										</select>
+									</div>
+								}
+								<div class="grid gap-3 sm:grid-cols-2">
+									<div>
+										<label class="block text-sm font-medium" for="recipient">{ p.T("account.recipient") }</label>
+										<input id="recipient" name="recipient" maxlength="120" autocomplete="name" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+									</div>
+									<div>
+										<label class="block text-sm font-medium" for="delivery_phone">{ p.T("account.phone") }</label>
+										<input id="delivery_phone" name="delivery_phone" maxlength="40" autocomplete="tel" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+									</div>
+									<div>
+										<label class="block text-sm font-medium" for="line1">{ p.T("account.street") }</label>
+										<input id="line1" name="line1" maxlength="200" autocomplete="address-line1" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+									</div>
+									<div>
+										<label class="block text-sm font-medium" for="postcode">{ p.T("checkout.postcode") }</label>
+										<input id="postcode" name="postcode" maxlength="12" autocomplete="postal-code" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+									</div>
+									<div>
+										<label class="block text-sm font-medium" for="city">{ p.T("account.city") }</label>
+										<input id="city" name="city" maxlength="120" autocomplete="address-level2" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+									</div>
+									<div>
+										<label class="block text-sm font-medium" for="country">{ p.T("account.country") }</label>
+										<input id="country" name="country" value="DE" maxlength="2" autocomplete="country" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+									</div>
 								</div>
 								<div class="rounded-lg bg-stone-50 px-3 py-2 text-sm text-stone-600">
 									<p class="font-medium text-stone-800">{ p.T("checkout.delivery_areas") }</p>
@@ -168,12 +234,42 @@ templ CheckoutPage(p Page) {
 					</fieldset>
 
 					<div>
+						<label class="block text-sm font-medium" for="scheduled_for">{ p.T("checkout.time") }</label>
+						<select id="scheduled_for" name="scheduled_for" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2">
+							<option value="asap">{ p.T("checkout.asap") }</option>
+							for _, slot := range p.Checkout.Slots {
+								<option value={ slot.Value }>{ slot.Label }</option>
+							}
+						</select>
+					</div>
+
+					<div>
 						<label class="block text-sm font-medium" for="notes">{ p.T("checkout.notes") }</label>
 						<textarea id="notes" name="notes" rows="2" maxlength="500"
 							class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"></textarea>
 					</div>
 
-					<p class="rounded-lg bg-stone-50 px-4 py-3 text-sm text-stone-600">{ p.T("checkout.payment_note") }</p>
+					<fieldset>
+						<legend class="text-sm font-medium">{ p.T("checkout.payment") }</legend>
+						<div class="mt-2 space-y-2 text-sm">
+							<label class="flex items-center gap-2">
+								<input type="radio" name="payment" value="cash" checked/>
+								{ p.T("checkout.pay_cash") }
+							</label>
+							if p.Checkout.CardEnabled {
+								<label class="flex items-center gap-2">
+									<input type="radio" name="payment" value="card"/>
+									{ p.T("checkout.pay_card") }
+								</label>
+							}
+						</div>
+						<p class="mt-2 rounded-lg bg-stone-50 px-4 py-3 text-sm text-stone-600">{ p.T("checkout.payment_note") }</p>
+					</fieldset>
+
+					<label class="flex items-start gap-2 text-sm">
+						<input type="checkbox" name="share_profile" value="1" checked?={ p.Checkout.SharedHere }/>
+						<span>{ p.T("checkout.share_profile") }</span>
+					</label>
 
 					<button type="submit" class="w-full rounded-lg bg-stone-900 px-4 py-3 font-medium text-white hover:bg-stone-700 disabled:opacity-50" data-checkout-submit>
 						{ p.T("checkout.place_order") }
@@ -247,6 +343,156 @@ templ SettingsPage(p Page) {
 	@Layout(p) {
 		<h1 class="text-3xl font-semibold tracking-tight">{ p.T("settings.title") }</h1>
 		<p class="mt-2 text-stone-600">{ p.T("settings.subtitle") }</p>
+
+		<section class="mt-8 rounded-2xl border border-stone-200 bg-white p-6">
+			<h2 class="text-lg font-semibold">{ p.T("settings.profile_heading") }</h2>
+			<p class="mt-1 text-sm text-stone-600">{ p.T("settings.profile_hint") }</p>
+			<form method="post" action="/dashboard/settings/profile" class="mt-4 grid gap-3 sm:grid-cols-2">
+				<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+				<label class="text-sm">{ p.T("settings.profile_name") }
+					<input name="name" value={ p.Settings.Profile.Name } required maxlength="160" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("settings.profile_legal") }
+					<input name="legal_name" value={ p.Settings.Profile.LegalName } maxlength="160" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm sm:col-span-2">{ p.T("settings.profile_description") }
+					<textarea name="description" rows="3" maxlength="2000" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2">{ p.Settings.Profile.Description }</textarea>
+				</label>
+				<label class="text-sm">{ p.T("settings.profile_phone") }
+					<input name="phone" value={ p.Settings.Profile.Phone } maxlength="40" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("settings.profile_email") }
+					<input name="email" type="email" value={ p.Settings.Profile.Email } maxlength="200" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("account.street") }
+					<input name="street" value={ p.Settings.Profile.Street } maxlength="200" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("account.line2") }
+					<input name="line2" value={ p.Settings.Profile.Line2 } maxlength="200" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("account.postcode") }
+					<input name="postcode" value={ p.Settings.Profile.Postcode } maxlength="20" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("account.city") }
+					<input name="city" value={ p.Settings.Profile.City } maxlength="120" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("settings.profile_country") }
+					<input name="country" value={ p.Settings.Profile.Country } maxlength="2" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("settings.profile_cuisine") }
+					<input name="cuisine" value={ p.Settings.Profile.Cuisine } maxlength="120" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("settings.profile_timezone") }
+					<input name="timezone" value={ p.Settings.Profile.Timezone } required class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+				</label>
+				<label class="text-sm">{ p.T("settings.profile_locale") }
+					<select name="locale" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2">
+						<option value="en" selected?={ p.Settings.Profile.Locale == "en" }>English</option>
+						<option value="de" selected?={ p.Settings.Profile.Locale == "de" }>Deutsch</option>
+					</select>
+				</label>
+				<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="pickup_enabled" checked?={ p.Settings.Profile.PickupEnabled }/> { p.T("settings.profile_pickup") }</label>
+				<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="self_delivery_enabled" checked?={ p.Settings.Profile.SelfDeliveryEnabled }/> { p.T("settings.profile_delivery") }</label>
+				<div class="sm:col-span-2">
+					<button type="submit" class="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700">{ p.T("settings.save") }</button>
+				</div>
+			</form>
+		</section>
+
+		if p.Settings.CanBrand {
+			<section class="mt-6 rounded-2xl border border-stone-200 bg-white p-6">
+				<h2 class="text-lg font-semibold">{ p.T("settings.branding_heading") }</h2>
+				<p class="mt-1 text-sm text-stone-600">{ p.T("settings.branding_hint") }</p>
+				<form method="post" action="/dashboard/settings/branding" class="mt-4 grid gap-3 sm:grid-cols-2">
+					<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+					<label class="text-sm sm:col-span-2">{ p.T("settings.branding_tagline") }
+						<input name="tagline" value={ p.Settings.Brand.Tagline } maxlength="120" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2"/>
+					</label>
+					<label class="text-sm">{ p.T("settings.branding_primary") }
+						<input name="primary_color" type="color" value={ p.Settings.Brand.PrimaryColor } class="mt-1 h-10 w-full rounded-lg border border-stone-300"/>
+					</label>
+					<label class="text-sm">{ p.T("settings.branding_secondary") }
+						<input name="secondary_color" type="color" value={ p.Settings.Brand.SecondaryColor } class="mt-1 h-10 w-full rounded-lg border border-stone-300"/>
+					</label>
+					<label class="text-sm">{ p.T("settings.branding_accent") }
+						<input name="accent_color" type="color" value={ p.Settings.Brand.AccentColor } class="mt-1 h-10 w-full rounded-lg border border-stone-300"/>
+					</label>
+					<label class="text-sm">{ p.T("settings.branding_background") }
+						<input name="background_color" type="color" value={ p.Settings.Brand.Background } class="mt-1 h-10 w-full rounded-lg border border-stone-300"/>
+					</label>
+					<label class="text-sm">{ p.T("settings.branding_text") }
+						<input name="text_color" type="color" value={ p.Settings.Brand.TextColor } class="mt-1 h-10 w-full rounded-lg border border-stone-300"/>
+					</label>
+					<label class="text-sm">{ p.T("settings.branding_font") }
+						<select name="font" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2">
+							<option value="Inter" selected?={ p.Settings.Brand.Font == "Inter" }>Inter</option>
+							<option value="Playfair Display" selected?={ p.Settings.Brand.Font == "Playfair Display" }>Playfair Display</option>
+							<option value="Lora" selected?={ p.Settings.Brand.Font == "Lora" }>Lora</option>
+							<option value="DM Sans" selected?={ p.Settings.Brand.Font == "DM Sans" }>DM Sans</option>
+							<option value="Cormorant Garamond" selected?={ p.Settings.Brand.Font == "Cormorant Garamond" }>Cormorant Garamond</option>
+						</select>
+					</label>
+					<label class="text-sm">{ p.T("settings.branding_template") }
+						<select name="template" class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2">
+							<option value="classic-bistro" selected?={ p.Settings.Brand.Template == "classic-bistro" }>Classic Bistro</option>
+							<option value="modern-dark" selected?={ p.Settings.Brand.Template == "modern-dark" }>Modern Dark</option>
+							<option value="warm-tavern" selected?={ p.Settings.Brand.Template == "warm-tavern" }>Warm Tavern</option>
+						</select>
+					</label>
+					<div class="sm:col-span-2">
+						<button type="submit" class="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700">{ p.T("settings.save") }</button>
+					</div>
+				</form>
+				<div class="mt-6 grid gap-4 border-t border-stone-100 pt-4 sm:grid-cols-2">
+					<form method="post" action="/dashboard/settings/branding/logo" enctype="multipart/form-data" class="rounded-xl border border-stone-200 p-4">
+						<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+						<h3 class="text-sm font-semibold">{ p.T("settings.branding_logo") }</h3>
+						if p.Settings.Brand.LogoURL != "" {
+							<img src={ p.Settings.Brand.LogoURL } alt="" class="mt-2 h-16 w-auto rounded"/>
+						}
+						<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required class="mt-3 block w-full text-sm"/>
+						<button type="submit" class="mt-3 rounded-lg border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100">{ p.T("settings.upload") }</button>
+					</form>
+					<form method="post" action="/dashboard/settings/branding/cover" enctype="multipart/form-data" class="rounded-xl border border-stone-200 p-4">
+						<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+						<h3 class="text-sm font-semibold">{ p.T("settings.branding_cover") }</h3>
+						if p.Settings.Brand.CoverURL != "" {
+							<img src={ p.Settings.Brand.CoverURL } alt="" class="mt-2 h-16 w-auto rounded"/>
+						}
+						<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required class="mt-3 block w-full text-sm"/>
+						<button type="submit" class="mt-3 rounded-lg border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100">{ p.T("settings.upload") }</button>
+					</form>
+				</div>
+			</section>
+		}
+
+		<section class="mt-6 rounded-2xl border border-stone-200 bg-white p-6">
+			<h2 class="text-lg font-semibold">{ p.T("settings.payments_heading") }</h2>
+			<p class="mt-1 text-sm text-stone-600">{ p.T("settings.payments_hint") }</p>
+			if p.Settings.Payment.Configured {
+				<p class="mt-2 text-sm font-medium text-emerald-700">{ p.T("settings.payments_connected") }
+					if p.Settings.Payment.LiveMode {
+						<span class="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800">LIVE</span>
+					}
+				</p>
+			}
+			<form method="post" action="/dashboard/settings/payments" class="mt-4 grid gap-3 sm:grid-cols-2">
+				<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+				<label class="text-sm sm:col-span-2">{ p.T("settings.payments_publishable") }
+					<input name="publishable_key" value={ p.Settings.Payment.PublishableKey } required class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 font-mono text-xs"/>
+				</label>
+				<label class="text-sm">{ p.T("settings.payments_secret") }
+					<input name="secret_key" type="password" autocomplete="new-password" placeholder={ p.T("settings.payments_keep_blank") } class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 font-mono text-xs"/>
+				</label>
+				<label class="text-sm">{ p.T("settings.payments_webhook") }
+					<input name="webhook_secret" type="password" autocomplete="new-password" placeholder={ p.T("settings.payments_keep_blank") } class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 font-mono text-xs"/>
+				</label>
+				<p class="text-xs text-stone-500 sm:col-span-2">{ p.T("settings.payments_note") }</p>
+				<div class="sm:col-span-2">
+					<button type="submit" class="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700">{ p.T("settings.save") }</button>
+				</div>
+			</form>
+		</section>
 
 		<section class="mt-8 rounded-2xl border border-stone-200 bg-white p-6">
 			<h2 class="text-lg font-semibold">{ p.T("settings.vat_heading") }</h2>

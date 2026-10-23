@@ -11,6 +11,7 @@ import (
 
 	"tablekit.de/tablekit/internal/auth"
 	"tablekit.de/tablekit/internal/crypto"
+	"tablekit.de/tablekit/internal/customer"
 	"tablekit.de/tablekit/internal/i18n"
 	"tablekit.de/tablekit/internal/logging"
 	"tablekit.de/tablekit/internal/tenant"
@@ -73,7 +74,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
+			"default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -109,24 +110,34 @@ func (s *Server) loadSession(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		cookie, err := r.Cookie(s.sessionCookieName())
-		if err != nil || cookie.Value == "" {
-			next.ServeHTTP(w, r)
-			return
+		ctx := r.Context()
+		if cookie, err := r.Cookie(s.sessionCookieName()); err == nil && cookie.Value != "" {
+			session, staff, err := s.sessions.Load(ctx, m.ID, cookie.Value)
+			if err != nil {
+				s.clearSessionCookies(w)
+			} else {
+				id := auth.Identity{Merchant: m, Staff: staff, Session: session}
+				ctx = auth.WithIdentity(ctx, id)
+			}
 		}
-		session, staff, err := s.sessions.Load(r.Context(), m.ID, cookie.Value)
-		if err != nil {
-			s.clearSessionCookies(w)
-			next.ServeHTTP(w, r)
-			return
+		if cookie, err := r.Cookie(s.customerCookieName()); err == nil && cookie.Value != "" {
+			session, account, err := s.customerSvc.Authenticate(ctx, cookie.Value)
+			if err != nil {
+				s.clearCustomerCookie(w)
+			} else {
+				ctx = customer.WithIdentity(ctx, customer.Identity{Account: account, Session: session})
+			}
 		}
-		id := auth.Identity{Merchant: m, Staff: staff, Session: session}
-		next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), id)))
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 func (s *Server) ensureCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/webhooks/stripe" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		cookie, err := r.Cookie(s.csrfCookieName())
 		if err != nil || cookie.Value == "" {
 			token, genErr := crypto.RandomToken(32)
@@ -255,6 +266,21 @@ func (s *Server) requirePermission(perm auth.Permission) func(http.Handler) http
 	}
 }
 
+func (s *Server) requireAnyPermission(perms ...auth.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return s.requireVerified(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, _ := auth.FromContext(r.Context())
+			for _, perm := range perms {
+				if id.Can(perm) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			http.Error(w, "forbidden", http.StatusForbidden)
+		}))
+	}
+}
+
 func (s *Server) requireSetup(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := tenant.FromContext(r.Context()); !ok {
@@ -324,6 +350,40 @@ func (s *Server) clearSessionCookies(w http.ResponseWriter) {
 			HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
 		})
 	}
+}
+
+func (s *Server) customerCookieName() string { return "tk_customer" }
+
+func (s *Server) setCustomerCookie(w http.ResponseWriter, token string, expires time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     s.customerCookieName(),
+		Value:    token,
+		Path:     "/",
+		Domain:   "." + s.cfg.BaseDomain,
+		HttpOnly: true,
+		Secure:   s.cfg.CookieSecure,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  expires,
+	})
+}
+
+func (s *Server) clearCustomerCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: s.customerCookieName(), Value: "", Path: "/",
+		Domain: "." + s.cfg.BaseDomain, MaxAge: -1,
+		HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (s *Server) requireCustomer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := customer.FromContext(r.Context()); !ok {
+			target := url.QueryEscape(r.URL.RequestURI())
+			http.Redirect(w, r, "/account/login?next="+target, http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) clientIP(r *http.Request) string {

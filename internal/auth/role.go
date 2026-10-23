@@ -72,10 +72,13 @@ var permissions = map[Role]map[Permission]bool{
 		PermOrdersView:    true,
 		PermOrdersManage:  true,
 		PermKitchen:       true,
+		PermMenuManage:    true,
 	},
 	RoleDriver: {
 		PermDashboardView: true,
+		PermOrdersView:    true,
 		PermDelivery:      true,
+		PermMenuManage:    true,
 	},
 }
 

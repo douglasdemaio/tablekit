@@ -203,18 +203,22 @@
     if (!form) return;
     var fields = form.querySelector("[data-delivery-fields]");
     var radios = form.querySelectorAll('input[name="fulfilment"]');
+    var saved = form.querySelector('select[name="address_id"]');
+    var addressInputs = ["recipient", "delivery_phone", "line1", "postcode", "city"];
     function apply() {
       var selected = form.querySelector('input[name="fulfilment"]:checked');
       var delivery = selected && selected.value === "delivery";
       if (fields) fields.hidden = !delivery;
-      var postcode = form.querySelector('input[name="postcode"]');
-      var address = form.querySelector('input[name="address"]');
-      if (postcode) postcode.required = !!delivery;
-      if (address) address.required = !!delivery;
+      var useNew = !saved || saved.value === "";
+      for (var i = 0; i < addressInputs.length; i++) {
+        var input = form.querySelector('[name="' + addressInputs[i] + '"]');
+        if (input) input.required = !!delivery && useNew;
+      }
     }
     for (var i = 0; i < radios.length; i++) {
       radios[i].addEventListener("change", apply);
     }
+    if (saved) saved.addEventListener("change", apply);
     apply();
 
     form.addEventListener("submit", function (event) {

@@ -7,10 +7,76 @@ package sqlcgen
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createPaymentRecord = `-- name: CreatePaymentRecord :exec
+INSERT INTO payment_records (merchant_id, order_id, provider, provider_ref, kind, amount_minor, currency, status)
+VALUES ($1::uuid, $2::uuid, 'stripe', $3::text, 'payment', $4, $5::char(3), 'pending')
+ON CONFLICT DO NOTHING
+`
+
+type CreatePaymentRecordParams struct {
+	Column1     uuid.UUID
+	Column2     uuid.UUID
+	Column3     string
+	AmountMinor int32
+	Column5     string
+}
+
+func (q *Queries) CreatePaymentRecord(ctx context.Context, arg CreatePaymentRecordParams) error {
+	_, err := q.db.Exec(ctx, createPaymentRecord,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.AmountMinor,
+		arg.Column5,
+	)
+	return err
+}
+
+const getBrandSettings = `-- name: GetBrandSettings :one
+SELECT merchant_id, logo_asset_id, cover_asset_id, primary_color, secondary_color,
+       font, tagline, template, accent_color, background_color, text_color
+FROM brand_settings
+WHERE merchant_id = $1::uuid
+`
+
+type GetBrandSettingsRow struct {
+	MerchantID      uuid.UUID
+	LogoAssetID     *uuid.UUID
+	CoverAssetID    *uuid.UUID
+	PrimaryColor    string
+	SecondaryColor  string
+	Font            string
+	Tagline         string
+	Template        string
+	AccentColor     string
+	BackgroundColor string
+	TextColor       string
+}
+
+func (q *Queries) GetBrandSettings(ctx context.Context, dollar_1 uuid.UUID) (GetBrandSettingsRow, error) {
+	row := q.db.QueryRow(ctx, getBrandSettings, dollar_1)
+	var i GetBrandSettingsRow
+	err := row.Scan(
+		&i.MerchantID,
+		&i.LogoAssetID,
+		&i.CoverAssetID,
+		&i.PrimaryColor,
+		&i.SecondaryColor,
+		&i.Font,
+		&i.Tagline,
+		&i.Template,
+		&i.AccentColor,
+		&i.BackgroundColor,
+		&i.TextColor,
+	)
+	return i, err
+}
 
 const getCurrentMerchant = `-- name: GetCurrentMerchant :one
 SELECT id, name, slug, legal_name, timezone, locale, currency, created_at, updated_at, deleted_at FROM merchants
@@ -47,6 +113,386 @@ func (q *Queries) GetCurrentMerchant(ctx context.Context) (GetCurrentMerchantRow
 	return i, err
 }
 
+const getMerchantFull = `-- name: GetMerchantFull :one
+SELECT id, name, slug, legal_name, timezone, locale, currency, vat_rate_bp,
+       description, phone, email, street, line2, postcode, city, country, cuisine,
+       pickup_enabled, self_delivery_enabled
+FROM merchants
+WHERE id = $1::uuid
+  AND deleted_at IS NULL
+`
+
+type GetMerchantFullRow struct {
+	ID                  uuid.UUID
+	Name                string
+	Slug                string
+	LegalName           *string
+	Timezone            string
+	Locale              string
+	Currency            string
+	VatRateBp           int32
+	Description         string
+	Phone               string
+	Email               string
+	Street              string
+	Line2               string
+	Postcode            string
+	City                string
+	Country             string
+	Cuisine             string
+	PickupEnabled       bool
+	SelfDeliveryEnabled bool
+}
+
+func (q *Queries) GetMerchantFull(ctx context.Context, dollar_1 uuid.UUID) (GetMerchantFullRow, error) {
+	row := q.db.QueryRow(ctx, getMerchantFull, dollar_1)
+	var i GetMerchantFullRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Slug,
+		&i.LegalName,
+		&i.Timezone,
+		&i.Locale,
+		&i.Currency,
+		&i.VatRateBp,
+		&i.Description,
+		&i.Phone,
+		&i.Email,
+		&i.Street,
+		&i.Line2,
+		&i.Postcode,
+		&i.City,
+		&i.Country,
+		&i.Cuisine,
+		&i.PickupEnabled,
+		&i.SelfDeliveryEnabled,
+	)
+	return i, err
+}
+
+const getPaymentConnection = `-- name: GetPaymentConnection :one
+SELECT id, merchant_id, provider, status, publishable_key, secret_key_enc,
+       webhook_secret_enc, livemode
+FROM payment_connections
+WHERE merchant_id = $1::uuid
+  AND provider = 'stripe'
+`
+
+type GetPaymentConnectionRow struct {
+	ID               uuid.UUID
+	MerchantID       uuid.UUID
+	Provider         string
+	Status           string
+	PublishableKey   *string
+	SecretKeyEnc     []byte
+	WebhookSecretEnc []byte
+	Livemode         bool
+}
+
+func (q *Queries) GetPaymentConnection(ctx context.Context, dollar_1 uuid.UUID) (GetPaymentConnectionRow, error) {
+	row := q.db.QueryRow(ctx, getPaymentConnection, dollar_1)
+	var i GetPaymentConnectionRow
+	err := row.Scan(
+		&i.ID,
+		&i.MerchantID,
+		&i.Provider,
+		&i.Status,
+		&i.PublishableKey,
+		&i.SecretKeyEnc,
+		&i.WebhookSecretEnc,
+		&i.Livemode,
+	)
+	return i, err
+}
+
+const getPaymentRecordByRef = `-- name: GetPaymentRecordByRef :one
+SELECT id, merchant_id, order_id, provider, provider_ref, kind, amount_minor,
+       currency, status, created_at
+FROM payment_records
+WHERE merchant_id = $1::uuid
+  AND provider = 'stripe'
+  AND provider_ref = $2::text
+`
+
+type GetPaymentRecordByRefParams struct {
+	Column1 uuid.UUID
+	Column2 string
+}
+
+type GetPaymentRecordByRefRow struct {
+	ID          uuid.UUID
+	MerchantID  uuid.UUID
+	OrderID     *uuid.UUID
+	Provider    string
+	ProviderRef string
+	Kind        string
+	AmountMinor int32
+	Currency    string
+	Status      string
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetPaymentRecordByRef(ctx context.Context, arg GetPaymentRecordByRefParams) (GetPaymentRecordByRefRow, error) {
+	row := q.db.QueryRow(ctx, getPaymentRecordByRef, arg.Column1, arg.Column2)
+	var i GetPaymentRecordByRefRow
+	err := row.Scan(
+		&i.ID,
+		&i.MerchantID,
+		&i.OrderID,
+		&i.Provider,
+		&i.ProviderRef,
+		&i.Kind,
+		&i.AmountMinor,
+		&i.Currency,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertWebhookEvent = `-- name: InsertWebhookEvent :one
+INSERT INTO webhook_events (provider, provider_event_id, event_type, payload, status)
+VALUES ('stripe', $1::text, $2::text, $3::jsonb, 'received')
+ON CONFLICT (provider, provider_event_id) DO NOTHING
+RETURNING id
+`
+
+type InsertWebhookEventParams struct {
+	Column1 string
+	Column2 string
+	Column3 json.RawMessage
+}
+
+func (q *Queries) InsertWebhookEvent(ctx context.Context, arg InsertWebhookEventParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertWebhookEvent, arg.Column1, arg.Column2, arg.Column3)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const markOrderPaymentFailed = `-- name: MarkOrderPaymentFailed :exec
+UPDATE orders
+SET payment_status = 'failed',
+    status = 'payment_failed'::order_status,
+    updated_at = now()
+WHERE id = $1::uuid
+  AND payment_status <> 'paid'
+`
+
+func (q *Queries) MarkOrderPaymentFailed(ctx context.Context, dollar_1 uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markOrderPaymentFailed, dollar_1)
+	return err
+}
+
+const markOrderPaymentPaid = `-- name: MarkOrderPaymentPaid :one
+UPDATE orders
+SET payment_status = 'paid',
+    status = CASE WHEN status = 'pending_payment' THEN 'submitted'::order_status ELSE status END,
+    updated_at = now()
+WHERE id = $1::uuid
+RETURNING id, public_ref, status, payment_status
+`
+
+type MarkOrderPaymentPaidRow struct {
+	ID                uuid.UUID
+	PublicRef         string
+	Status            OrderStatusEnum
+	PaymentStatusEnum PaymentStatusEnum
+}
+
+func (q *Queries) MarkOrderPaymentPaid(ctx context.Context, dollar_1 uuid.UUID) (MarkOrderPaymentPaidRow, error) {
+	row := q.db.QueryRow(ctx, markOrderPaymentPaid, dollar_1)
+	var i MarkOrderPaymentPaidRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicRef,
+		&i.Status,
+		&i.PaymentStatusEnum,
+	)
+	return i, err
+}
+
+const markPaymentRecordFailed = `-- name: MarkPaymentRecordFailed :exec
+UPDATE payment_records
+SET status = 'failed', updated_at = now()
+WHERE id = $1::uuid
+`
+
+func (q *Queries) MarkPaymentRecordFailed(ctx context.Context, dollar_1 uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markPaymentRecordFailed, dollar_1)
+	return err
+}
+
+const markPaymentRecordPaid = `-- name: MarkPaymentRecordPaid :exec
+UPDATE payment_records
+SET status = 'paid', updated_at = now()
+WHERE id = $1::uuid
+`
+
+func (q *Queries) MarkPaymentRecordPaid(ctx context.Context, dollar_1 uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markPaymentRecordPaid, dollar_1)
+	return err
+}
+
+const markWebhookEvent = `-- name: MarkWebhookEvent :exec
+UPDATE webhook_events
+SET status = $1, error = $2, processed_at = now()
+WHERE id = $3::bigint
+`
+
+type MarkWebhookEventParams struct {
+	Status  string
+	Error   *string
+	Column3 int64
+}
+
+func (q *Queries) MarkWebhookEvent(ctx context.Context, arg MarkWebhookEventParams) error {
+	_, err := q.db.Exec(ctx, markWebhookEvent, arg.Status, arg.Error, arg.Column3)
+	return err
+}
+
+const setBrandCover = `-- name: SetBrandCover :exec
+UPDATE brand_settings SET cover_asset_id = $1, updated_at = now() WHERE merchant_id = $2::uuid
+`
+
+type SetBrandCoverParams struct {
+	CoverAssetID *uuid.UUID
+	Column2      uuid.UUID
+}
+
+func (q *Queries) SetBrandCover(ctx context.Context, arg SetBrandCoverParams) error {
+	_, err := q.db.Exec(ctx, setBrandCover, arg.CoverAssetID, arg.Column2)
+	return err
+}
+
+const setBrandLogo = `-- name: SetBrandLogo :exec
+UPDATE brand_settings SET logo_asset_id = $1, updated_at = now() WHERE merchant_id = $2::uuid
+`
+
+type SetBrandLogoParams struct {
+	LogoAssetID *uuid.UUID
+	Column2     uuid.UUID
+}
+
+func (q *Queries) SetBrandLogo(ctx context.Context, arg SetBrandLogoParams) error {
+	_, err := q.db.Exec(ctx, setBrandLogo, arg.LogoAssetID, arg.Column2)
+	return err
+}
+
+const updateBrandSettings = `-- name: UpdateBrandSettings :exec
+INSERT INTO brand_settings (
+    merchant_id, primary_color, secondary_color, font, tagline, template,
+    accent_color, background_color, text_color
+) VALUES (
+    $1, $2, $3,
+    $4, $5, $6, $7,
+    $8, $9
+)
+ON CONFLICT (merchant_id) DO UPDATE SET
+    primary_color = EXCLUDED.primary_color,
+    secondary_color = EXCLUDED.secondary_color,
+    font = EXCLUDED.font,
+    tagline = EXCLUDED.tagline,
+    template = EXCLUDED.template,
+    accent_color = EXCLUDED.accent_color,
+    background_color = EXCLUDED.background_color,
+    text_color = EXCLUDED.text_color,
+    updated_at = now()
+`
+
+type UpdateBrandSettingsParams struct {
+	MerchantID      uuid.UUID
+	PrimaryColor    string
+	SecondaryColor  string
+	Font            string
+	Tagline         string
+	Template        string
+	AccentColor     string
+	BackgroundColor string
+	TextColor       string
+}
+
+func (q *Queries) UpdateBrandSettings(ctx context.Context, arg UpdateBrandSettingsParams) error {
+	_, err := q.db.Exec(ctx, updateBrandSettings,
+		arg.MerchantID,
+		arg.PrimaryColor,
+		arg.SecondaryColor,
+		arg.Font,
+		arg.Tagline,
+		arg.Template,
+		arg.AccentColor,
+		arg.BackgroundColor,
+		arg.TextColor,
+	)
+	return err
+}
+
+const updateMerchantFull = `-- name: UpdateMerchantFull :exec
+UPDATE merchants
+SET name = $1,
+    legal_name = $2,
+    timezone = $3,
+    locale = $4,
+    vat_rate_bp = $5,
+    description = $6,
+    phone = $7,
+    email = $8,
+    street = $9,
+    line2 = $10,
+    postcode = $11,
+    city = $12,
+    country = $13,
+    cuisine = $14,
+    pickup_enabled = $15,
+    self_delivery_enabled = $16,
+    updated_at = now()
+WHERE id = $17
+`
+
+type UpdateMerchantFullParams struct {
+	Name                string
+	LegalName           *string
+	Timezone            string
+	Locale              string
+	VatRateBp           int32
+	Description         string
+	Phone               string
+	Email               string
+	Street              string
+	Line2               string
+	Postcode            string
+	City                string
+	Country             string
+	Cuisine             string
+	PickupEnabled       bool
+	SelfDeliveryEnabled bool
+	ID                  uuid.UUID
+}
+
+func (q *Queries) UpdateMerchantFull(ctx context.Context, arg UpdateMerchantFullParams) error {
+	_, err := q.db.Exec(ctx, updateMerchantFull,
+		arg.Name,
+		arg.LegalName,
+		arg.Timezone,
+		arg.Locale,
+		arg.VatRateBp,
+		arg.Description,
+		arg.Phone,
+		arg.Email,
+		arg.Street,
+		arg.Line2,
+		arg.Postcode,
+		arg.City,
+		arg.Country,
+		arg.Cuisine,
+		arg.PickupEnabled,
+		arg.SelfDeliveryEnabled,
+		arg.ID,
+	)
+	return err
+}
+
 const updateMerchantProfile = `-- name: UpdateMerchantProfile :exec
 UPDATE merchants
 SET name = $1,
@@ -71,6 +517,44 @@ func (q *Queries) UpdateMerchantProfile(ctx context.Context, arg UpdateMerchantP
 		arg.Timezone,
 		arg.Locale,
 		arg.ID,
+	)
+	return err
+}
+
+const upsertPaymentConnection = `-- name: UpsertPaymentConnection :exec
+INSERT INTO payment_connections (
+    merchant_id, provider, status, publishable_key, secret_key_enc,
+    webhook_secret_enc, livemode
+) VALUES (
+    $1, 'stripe', $2, $3,
+    $4, $5, $6
+)
+ON CONFLICT (merchant_id, provider) DO UPDATE SET
+    status = EXCLUDED.status,
+    publishable_key = EXCLUDED.publishable_key,
+    secret_key_enc = EXCLUDED.secret_key_enc,
+    webhook_secret_enc = EXCLUDED.webhook_secret_enc,
+    livemode = EXCLUDED.livemode,
+    updated_at = now()
+`
+
+type UpsertPaymentConnectionParams struct {
+	MerchantID       uuid.UUID
+	Status           string
+	PublishableKey   *string
+	SecretKeyEnc     []byte
+	WebhookSecretEnc []byte
+	Livemode         bool
+}
+
+func (q *Queries) UpsertPaymentConnection(ctx context.Context, arg UpsertPaymentConnectionParams) error {
+	_, err := q.db.Exec(ctx, upsertPaymentConnection,
+		arg.MerchantID,
+		arg.Status,
+		arg.PublishableKey,
+		arg.SecretKeyEnc,
+		arg.WebhookSecretEnc,
+		arg.Livemode,
 	)
 	return err
 }
