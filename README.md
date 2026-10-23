@@ -67,6 +67,11 @@ Email:    owner@example.com
 Password: devpassword123
 ```
 
+```text
+Customer Email:    customer@example.com
+Get log code from command: grep "development email" /tmp/opencode/server.log | tail -1
+```
+
 On the first login the owner is sent to `/setup/mfa`. Scan the QR code with an
 authenticator app, enter the 6-digit code to finish setup, and use that code on
 later logins. Change `TABLEKIT_BOOTSTRAP_PASSWORD` before bootstrapping anything
