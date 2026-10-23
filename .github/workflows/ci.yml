@@ -73,6 +73,4 @@ jobs:
       - name: gosec
         run: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude-generated ./...
       - name: gitleaks
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh -s -- -b /usr/local/bin
-          gitleaks detect --no-banner --redact
+        run: go run github.com/zricethezav/gitleaks/v8@latest detect --no-banner --redact --source .
