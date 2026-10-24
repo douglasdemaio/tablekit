@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
@@ -132,6 +133,13 @@ func (s *Server) loadSession(next http.Handler) http.Handler {
 	})
 }
 
+type csrfContextKey struct{}
+
+func csrfFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(csrfContextKey{}).(string)
+	return v
+}
+
 func (s *Server) ensureCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/webhooks/stripe" {
@@ -157,6 +165,8 @@ func (s *Server) ensureCSRF(next http.Handler) http.Handler {
 			http.SetCookie(w, cookie)
 		}
 
+		ctx := context.WithValue(r.Context(), csrfContextKey{}, cookie.Value)
+		r = r.WithContext(ctx)
 		if isSafeMethod(r.Method) {
 			next.ServeHTTP(w, r)
 			return

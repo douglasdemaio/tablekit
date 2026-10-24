@@ -30,6 +30,9 @@ func (s *Server) page(r *http.Request, titleKey string) templates.Page {
 	if v, err := r.Cookie(s.csrfCookieName()); err == nil {
 		p.CSRFToken = v.Value
 	}
+	if p.CSRFToken == "" {
+		p.CSRFToken = csrfFromContext(r.Context())
+	}
 	if m, ok := tenant.FromContext(r.Context()); ok {
 		p.MerchantName = m.Name
 		p.MerchantSlug = m.Slug
