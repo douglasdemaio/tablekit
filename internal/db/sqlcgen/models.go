@@ -639,9 +639,6 @@ type PaymentConnection struct {
 	Capabilities       json.RawMessage
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
-	PublishableKey     *string
-	SecretKeyEnc       []byte
-	WebhookSecretEnc   []byte
 	Livemode           bool
 }
 

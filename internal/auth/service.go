@@ -52,7 +52,7 @@ func NewService(store *db.Store, sealer *crypto.Sealer, cfg *config.Config, wa *
 		Config:  cfg,
 		WA:      wa,
 		Logger:  logger,
-		Limiter: NewLimiter(),
+		Limiter: &Limiter{entries: make(map[string]*limiterEntry), now: time.Now, Disabled: cfg.RateLimitDisabled},
 		Now:     time.Now,
 	}
 }

@@ -84,15 +84,17 @@ func (s *Server) handleCustomerLoginVerify(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
-	s.setCustomerCookie(w, res.Token, res.Expires)
+	s.setCustomerCookie(w, s.customerCookieDomain(r.Host), res.Token, res.Expires)
 	http.Redirect(w, r, next, http.StatusSeeOther) // #nosec G710 -- next is validated by safeNext
 }
 
 func (s *Server) handleCustomerLogout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(s.customerCookieName()); err == nil {
-		_ = s.customerSvc.Logout(r.Context(), c.Value)
+	for _, c := range r.Cookies() {
+		if c.Name == s.customerCookieName() && c.Value != "" {
+			_ = s.customerSvc.Logout(r.Context(), c.Value)
+		}
 	}
-	s.clearCustomerCookie(w)
+	s.clearCustomerCookie(w, s.customerCookieDomain(r.Host))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

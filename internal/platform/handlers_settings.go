@@ -51,6 +51,8 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		p.Error = s.tr(r, "settings.error.branding")
 	case "payments":
 		p.Error = s.tr(r, "settings.error.payments")
+	case "payments_country":
+		p.Error = s.tr(r, "settings.error.country")
 	case "image_size":
 		p.Error = s.tr(r, "menu.error.image_size")
 	case "image_type":

@@ -468,30 +468,27 @@ templ SettingsPage(p Page) {
 
 		<section class="mt-6 rounded-2xl border border-stone-200 bg-white p-6">
 			<h2 class="text-lg font-semibold">{ p.T("settings.payments_heading") }</h2>
-			<p class="mt-1 text-sm text-stone-600">{ p.T("settings.payments_hint") }</p>
-			if p.Settings.Payment.Configured {
-				<p class="mt-2 text-sm font-medium text-emerald-700">{ p.T("settings.payments_connected") }
+			if !p.Settings.Payment.Available {
+				<p class="mt-1 text-sm text-stone-600">{ p.T("settings.payments_not_enabled") }</p>
+			} else if p.Settings.Payment.Active {
+				<p class="mt-1 text-sm text-stone-600">{ p.T("settings.payments_active") }
 					if p.Settings.Payment.LiveMode {
 						<span class="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800">LIVE</span>
 					}
 				</p>
+			} else {
+				<p class="mt-1 text-sm text-stone-600">{ p.T("settings.payments_setup") }</p>
+				<form method="post" action="/dashboard/settings/payments/connect" class="mt-4">
+					<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
+					<button type="submit" class="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700">
+						if p.Settings.Payment.Connected {
+							{ p.T("settings.payments_continue") }
+						} else {
+							{ p.T("settings.payments_start") }
+						}
+					</button>
+				</form>
 			}
-			<form method="post" action="/dashboard/settings/payments" class="mt-4 grid gap-3 sm:grid-cols-2">
-				<input type="hidden" name="csrf_token" value={ p.CSRFToken }/>
-				<label class="text-sm sm:col-span-2">{ p.T("settings.payments_publishable") }
-					<input name="publishable_key" value={ p.Settings.Payment.PublishableKey } required class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 font-mono text-xs"/>
-				</label>
-				<label class="text-sm">{ p.T("settings.payments_secret") }
-					<input name="secret_key" type="password" autocomplete="new-password" placeholder={ p.T("settings.payments_keep_blank") } class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 font-mono text-xs"/>
-				</label>
-				<label class="text-sm">{ p.T("settings.payments_webhook") }
-					<input name="webhook_secret" type="password" autocomplete="new-password" placeholder={ p.T("settings.payments_keep_blank") } class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 font-mono text-xs"/>
-				</label>
-				<p class="text-xs text-stone-500 sm:col-span-2">{ p.T("settings.payments_note") }</p>
-				<div class="sm:col-span-2">
-					<button type="submit" class="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700">{ p.T("settings.save") }</button>
-				</div>
-			</form>
 		</section>
 
 		<section class="mt-8 rounded-2xl border border-stone-200 bg-white p-6">

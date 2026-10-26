@@ -14,9 +14,10 @@ type limiterEntry struct {
 // a multi-instance deployment must move this to a shared store (or use a
 // gateway-level limiter) in a later milestone.
 type Limiter struct {
-	mu      sync.Mutex
-	entries map[string]*limiterEntry
-	now     func() time.Time
+	mu       sync.Mutex
+	entries  map[string]*limiterEntry
+	now      func() time.Time
+	Disabled bool
 }
 
 func NewLimiter() *Limiter {
@@ -24,6 +25,9 @@ func NewLimiter() *Limiter {
 }
 
 func (l *Limiter) Allow(key string, limit int, window time.Duration) bool {
+	if l.Disabled {
+		return true
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()

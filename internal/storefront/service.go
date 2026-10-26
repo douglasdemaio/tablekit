@@ -1215,13 +1215,13 @@ func (s *Service) SetBrandAsset(ctx context.Context, merchantID uuid.UUID, kind 
 	})
 }
 
-// PaymentConnection is the restaurant's own Stripe configuration.
+// PaymentConnection is the restaurant's Stripe Connect state. Only the
+// non-secret account identifier and capability state are stored.
 type PaymentConnection struct {
-	Status           string
-	PublishableKey   string
-	SecretKeyEnc     []byte
-	WebhookSecretEnc []byte
-	LiveMode         bool
+	ConnectedAccountID string
+	Status             string
+	Capabilities       json.RawMessage
+	LiveMode           bool
 }
 
 func (s *Service) PaymentConnection(ctx context.Context, merchantID uuid.UUID) (PaymentConnection, error) {
@@ -1236,21 +1236,23 @@ func (s *Service) PaymentConnection(ctx context.Context, merchantID uuid.UUID) (
 		}
 		out.Status = pc.Status
 		out.LiveMode = pc.Livemode
-		out.SecretKeyEnc = pc.SecretKeyEnc
-		out.WebhookSecretEnc = pc.WebhookSecretEnc
-		if pc.PublishableKey != nil {
-			out.PublishableKey = *pc.PublishableKey
+		out.Capabilities = pc.Capabilities
+		if pc.ConnectedAccountID != nil {
+			out.ConnectedAccountID = *pc.ConnectedAccountID
 		}
 		return nil
 	})
 	return out, err
 }
 
-func (s *Service) SavePaymentConnection(ctx context.Context, merchantID uuid.UUID, publishable string, secretEnc, webhookEnc []byte, live bool) error {
+func (s *Service) SaveConnectedAccount(ctx context.Context, merchantID uuid.UUID, accountID, status string, capabilities json.RawMessage, live bool) error {
+	if capabilities == nil {
+		capabilities = json.RawMessage(`{}`)
+	}
 	return s.store.WithTenant(ctx, merchantID, func(q *sqlcgen.Queries) error {
 		return q.UpsertPaymentConnection(ctx, sqlcgen.UpsertPaymentConnectionParams{
-			MerchantID: merchantID, Status: "active", PublishableKey: &publishable,
-			SecretKeyEnc: secretEnc, WebhookSecretEnc: webhookEnc, Livemode: live,
+			MerchantID: merchantID, ConnectedAccountID: accountID, Status: status,
+			Capabilities: capabilities, Livemode: live,
 		})
 	})
 }

@@ -42,15 +42,16 @@ const (
 )
 
 type Service struct {
-	store  *db.Store
-	mailer email.Sender
-	log    *slog.Logger
-	Now    func() time.Time
-	TTL    time.Duration
+	store             *db.Store
+	mailer            email.Sender
+	log               *slog.Logger
+	Now               func() time.Time
+	TTL               time.Duration
+	RateLimitDisabled bool
 }
 
-func NewService(store *db.Store, mailer email.Sender, logger *slog.Logger, ttl time.Duration) *Service {
-	return &Service{store: store, mailer: mailer, log: logger, Now: time.Now, TTL: ttl}
+func NewService(store *db.Store, mailer email.Sender, logger *slog.Logger, ttl time.Duration, rateLimitDisabled bool) *Service {
+	return &Service{store: store, mailer: mailer, log: logger, Now: time.Now, TTL: ttl, RateLimitDisabled: rateLimitDisabled}
 }
 
 type LoginResult struct {
@@ -69,20 +70,22 @@ func (s *Service) RequestCode(ctx context.Context, emailAddr, ip string) error {
 	}
 	now := s.Now()
 	q := s.store.Queries()
-	n, err := q.CountRecentCustomerLoginCodes(ctx, emailAddr)
-	if err != nil {
-		return err
-	}
-	if n >= MaxCodesEmail {
-		return ErrRateLimited
-	}
-	if ip != "" {
-		n, err := q.CountCustomerLoginCodesForIP(ctx, parseIP(ip))
+	if !s.RateLimitDisabled {
+		n, err := q.CountRecentCustomerLoginCodes(ctx, emailAddr)
 		if err != nil {
 			return err
 		}
-		if n >= MaxCodesIP {
+		if n >= MaxCodesEmail {
 			return ErrRateLimited
+		}
+		if ip != "" {
+			n, err := q.CountCustomerLoginCodesForIP(ctx, parseIP(ip))
+			if err != nil {
+				return err
+			}
+			if n >= MaxCodesIP {
+				return ErrRateLimited
+			}
 		}
 	}
 	code, err := randomCode()

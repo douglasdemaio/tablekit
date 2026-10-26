@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"tablekit.de/tablekit/internal/customer"
+	"tablekit.de/tablekit/internal/db"
 	"tablekit.de/tablekit/internal/payments"
 	"tablekit.de/tablekit/internal/storefront"
 	"tablekit.de/tablekit/internal/tenant"
@@ -21,19 +22,15 @@ func (s *Server) createStripeCheckout(r *http.Request, m tenant.Merchant, cid cu
 	if err != nil {
 		return "", err
 	}
-	if pc.Status != "active" || len(pc.SecretKeyEnc) == 0 {
+	if !s.cfg.StripeEnabled() || pc.Status != "active" || pc.ConnectedAccountID == "" || pc.LiveMode != s.cfg.StripeLiveMode {
 		return "", storefront.ErrCardUnavailable
-	}
-	secret, err := s.sealer.Open(pc.SecretKeyEnc)
-	if err != nil {
-		return "", err
 	}
 	order, err := s.storefrontSvc.OrderByRef(r.Context(), m.ID, placed.PublicRef)
 	if err != nil {
 		return "", err
 	}
 	base := fmt.Sprintf("%s://%s", s.cfg.PublicScheme, r.Host)
-	client := payments.NewClient(string(secret))
+	client := payments.NewConnectClient(s.cfg.StripeSecretKey, pc.ConnectedAccountID)
 	session, err := client.CreateCheckoutSession(r.Context(), payments.CheckoutInput{
 		OrderID:      placed.ID.String(),
 		MerchantID:   m.ID.String(),
@@ -59,9 +56,8 @@ func (s *Server) createStripeCheckout(r *http.Request, m tenant.Merchant, cid cu
 }
 
 func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
-	m, ok := tenantFrom(r)
-	if !ok {
-		http.NotFound(w, r)
+	if !s.cfg.StripeEnabled() {
+		http.Error(w, "not configured", http.StatusServiceUnavailable)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -69,23 +65,30 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	pc, err := s.storefrontSvc.PaymentConnection(r.Context(), m.ID)
-	if err != nil || len(pc.WebhookSecretEnc) == 0 {
-		http.Error(w, "not configured", http.StatusServiceUnavailable)
-		return
-	}
-	secret, err := s.sealer.Open(pc.WebhookSecretEnc)
+	event, err := payments.VerifyWebhook(body, r.Header.Get("Stripe-Signature"), s.cfg.StripeWebhookSecret, time.Now())
 	if err != nil {
-		http.Error(w, "not configured", http.StatusServiceUnavailable)
-		return
-	}
-	event, err := payments.VerifyWebhook(body, r.Header.Get("Stripe-Signature"), string(secret), time.Now())
-	if err != nil {
-		s.log.Warn("stripe webhook signature rejected", "error", err, "merchant", m.ID)
+		s.log.Warn("stripe webhook signature rejected", "error", err)
 		http.Error(w, "invalid signature", http.StatusBadRequest)
 		return
 	}
-	eventID, fresh, err := s.storefrontSvc.BeginWebhookEvent(r.Context(), m.ID, event.ID, event.Type, body)
+	if event.Account == "" {
+		s.log.Warn("stripe webhook missing connected account", "event", event.ID, "type", event.Type)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	route, err := s.store.ResolveMerchantByPaymentAccount(r.Context(), event.Account)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			s.log.Warn("stripe webhook for unknown account", "account", event.Account, "event", event.ID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		s.log.Error("resolve stripe account", "error", err, "account", event.Account)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	merchantID := route.ID
+	eventID, fresh, err := s.storefrontSvc.BeginWebhookEvent(r.Context(), merchantID, event.ID, event.Type, body)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -94,15 +97,15 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	processErr := s.processStripeEvent(r, m.ID, event)
+	processErr := s.processStripeEvent(r, merchantID, event)
 	if processErr != nil {
 		msg := processErr.Error()
-		_ = s.storefrontSvc.FinishWebhookEvent(r.Context(), m.ID, eventID, "failed", &msg)
+		_ = s.storefrontSvc.FinishWebhookEvent(r.Context(), merchantID, eventID, "failed", &msg)
 		s.log.Error("stripe webhook processing failed", "error", processErr, "event", event.ID, "type", event.Type)
 		http.Error(w, "processing failed", http.StatusInternalServerError)
 		return
 	}
-	_ = s.storefrontSvc.FinishWebhookEvent(r.Context(), m.ID, eventID, "processed", nil)
+	_ = s.storefrontSvc.FinishWebhookEvent(r.Context(), merchantID, eventID, "processed", nil)
 	w.WriteHeader(http.StatusOK)
 }
 

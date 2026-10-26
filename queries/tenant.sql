@@ -71,25 +71,22 @@ UPDATE brand_settings SET logo_asset_id = $1, updated_at = now() WHERE merchant_
 UPDATE brand_settings SET cover_asset_id = $1, updated_at = now() WHERE merchant_id = $2::uuid;
 
 -- name: GetPaymentConnection :one
-SELECT id, merchant_id, provider, status, publishable_key, secret_key_enc,
-       webhook_secret_enc, livemode
+SELECT id, merchant_id, provider, connected_account_id, status, capabilities, livemode
 FROM payment_connections
 WHERE merchant_id = $1::uuid
   AND provider = 'stripe';
 
 -- name: UpsertPaymentConnection :exec
 INSERT INTO payment_connections (
-    merchant_id, provider, status, publishable_key, secret_key_enc,
-    webhook_secret_enc, livemode
+    merchant_id, provider, connected_account_id, status, capabilities, livemode
 ) VALUES (
-    sqlc.arg(merchant_id), 'stripe', sqlc.arg(status), sqlc.arg(publishable_key),
-    sqlc.arg(secret_key_enc), sqlc.arg(webhook_secret_enc), sqlc.arg(livemode)
+    sqlc.arg(merchant_id), 'stripe', sqlc.arg(connected_account_id)::text,
+    sqlc.arg(status), sqlc.arg(capabilities)::jsonb, sqlc.arg(livemode)
 )
 ON CONFLICT (merchant_id, provider) DO UPDATE SET
+    connected_account_id = EXCLUDED.connected_account_id,
     status = EXCLUDED.status,
-    publishable_key = EXCLUDED.publishable_key,
-    secret_key_enc = EXCLUDED.secret_key_enc,
-    webhook_secret_enc = EXCLUDED.webhook_secret_enc,
+    capabilities = EXCLUDED.capabilities,
     livemode = EXCLUDED.livemode,
     updated_at = now();
 

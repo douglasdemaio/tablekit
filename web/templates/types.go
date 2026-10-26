@@ -333,11 +333,12 @@ type ProfileSettingsView struct {
 	SelfDeliveryEnabled bool
 }
 
-// PaymentSettingsView shows the restaurant's Stripe configuration state.
+// PaymentSettingsView shows the restaurant's Stripe Connect state.
 type PaymentSettingsView struct {
-	Configured     bool
-	PublishableKey string
-	LiveMode       bool
+	Available bool
+	Connected bool
+	Active    bool
+	LiveMode  bool
 }
 
 // ConfirmationLine is a placed line on the confirmation page.

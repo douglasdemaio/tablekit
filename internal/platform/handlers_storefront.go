@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -21,6 +22,17 @@ import (
 )
 
 const pickupCodeCookie = "tk_pickup"
+
+func (s *Server) cardEnabled(ctx context.Context, merchantID uuid.UUID, enabled bool) bool {
+	if !enabled || !s.cfg.StripeEnabled() {
+		return false
+	}
+	pc, err := s.storefrontSvc.PaymentConnection(ctx, merchantID)
+	if err != nil {
+		return false
+	}
+	return pc.Status == "active" && pc.ConnectedAccountID != "" && pc.LiveMode == s.cfg.StripeLiveMode
+}
 
 func (s *Server) handleStorefront(w http.ResponseWriter, r *http.Request) {
 	m, ok := tenant.FromContext(r.Context())
@@ -80,7 +92,7 @@ func (s *Server) handleCheckoutPage(w http.ResponseWriter, r *http.Request) {
 		Phone:       cid.Account.Phone,
 		Addresses:   s.addressViews(addresses),
 		Slots:       s.slotViews(sf, time.Now()),
-		CardEnabled: sf.Settings.CardEnabled,
+		CardEnabled: s.cardEnabled(r.Context(), m.ID, sf.Settings.CardEnabled),
 		SharedHere:  s.customerSvc.HasShared(r.Context(), cid.Account.ID, m.ID),
 	}
 	s.render(w, r, http.StatusOK, templates.CheckoutPage(p))
@@ -162,6 +174,10 @@ func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 	payment := r.PostFormValue("payment")
 	if payment != "card" {
 		payment = "cash"
+	}
+	if payment == "card" && !s.cardEnabled(r.Context(), m.ID, true) {
+		s.renderCheckoutError(w, r, m.ID, "checkout.error.payment")
+		return
 	}
 	placed, err := s.storefrontSvc.PlaceOrder(r.Context(), m.ID, storefront.OrderInput{
 		CustomerID:   cid.Account.ID,
@@ -332,7 +348,7 @@ func (s *Server) renderCheckoutError(w http.ResponseWriter, r *http.Request, mer
 		Zones:       s.zoneViews(sf.Zones, sf.Settings.Currency),
 		SignedIn:    signed,
 		Slots:       s.slotViews(sf, time.Now()),
-		CardEnabled: sf.Settings.CardEnabled,
+		CardEnabled: s.cardEnabled(r.Context(), merchantID, sf.Settings.CardEnabled),
 	}
 	if signed {
 		view.Customer = displayName(cid.Account.Name, cid.Account.Email)

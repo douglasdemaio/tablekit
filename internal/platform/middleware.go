@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime/debug"
@@ -121,12 +122,25 @@ func (s *Server) loadSession(next http.Handler) http.Handler {
 				ctx = auth.WithIdentity(ctx, id)
 			}
 		}
-		if cookie, err := r.Cookie(s.customerCookieName()); err == nil && cookie.Value != "" {
-			session, account, err := s.customerSvc.Authenticate(ctx, cookie.Value)
-			if err != nil {
-				s.clearCustomerCookie(w)
-			} else {
+		var customerCookies []*http.Cookie
+		for _, cookie := range r.Cookies() {
+			if cookie.Name == s.customerCookieName() && cookie.Value != "" {
+				customerCookies = append(customerCookies, cookie)
+			}
+		}
+		if len(customerCookies) > 0 {
+			authenticated := false
+			for _, cookie := range customerCookies {
+				session, account, err := s.customerSvc.Authenticate(ctx, cookie.Value)
+				if err != nil {
+					continue
+				}
 				ctx = customer.WithIdentity(ctx, customer.Identity{Account: account, Session: session})
+				authenticated = true
+				break
+			}
+			if !authenticated {
+				s.clearCustomerCookie(w, s.customerCookieDomain(r.Host))
 			}
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -364,23 +378,52 @@ func (s *Server) clearSessionCookies(w http.ResponseWriter) {
 
 func (s *Server) customerCookieName() string { return "tk_customer" }
 
-func (s *Server) setCustomerCookie(w http.ResponseWriter, token string, expires time.Time) {
+func (s *Server) customerCookieDomain(host string) string {
+	base := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s.cfg.BaseDomain)), ".")
+	if base == "" {
+		return ""
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == base || strings.HasSuffix(host, "."+base) {
+		return "." + base
+	}
+	return ""
+}
+
+func (s *Server) setCustomerCookie(w http.ResponseWriter, domain, token string, expires time.Time) {
+	if domain != "" {
+		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
+			Name: s.customerCookieName(), Value: "", Path: "/", MaxAge: -1,
+			HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
+		})
+	}
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
 		Name:     s.customerCookieName(),
 		Value:    token,
 		Path:     "/",
-		Domain:   "." + s.cfg.BaseDomain,
+		Domain:   domain,
 		HttpOnly: true,
 		Secure:   s.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  expires,
+		MaxAge:   int(time.Until(expires).Seconds()),
 	})
 }
 
-func (s *Server) clearCustomerCookie(w http.ResponseWriter) {
+func (s *Server) clearCustomerCookie(w http.ResponseWriter, domain string) {
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
+		Name: s.customerCookieName(), Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
+	})
+	if domain == "" {
+		return
+	}
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows deployment config
 		Name: s.customerCookieName(), Value: "", Path: "/",
-		Domain: "." + s.cfg.BaseDomain, MaxAge: -1,
+		Domain: domain, MaxAge: -1,
 		HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
 	})
 }

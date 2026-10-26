@@ -1,5 +1,6 @@
-// Package payments talks to Stripe over its REST API using the restaurant's own
-// keys. The platform never holds, routes or splits customer money.
+// Package payments talks to Stripe over its REST API. Restaurant payments are
+// direct charges on connected accounts; the platform never holds, routes or
+// splits customer money.
 package payments
 
 import (
@@ -18,7 +19,10 @@ import (
 	"time"
 )
 
-const apiBase = "https://api.stripe.com"
+const (
+	apiBase    = "https://api.stripe.com"
+	apiVersion = "2026-09-30.endive"
+)
 
 var (
 	ErrSignature = errors.New("payments: invalid webhook signature")
@@ -26,15 +30,24 @@ var (
 	ErrNotPaid   = errors.New("payments: session not paid")
 )
 
-// Client creates Checkout Sessions with a restaurant's secret key.
+// Client calls Stripe with a platform secret key. Account is set for Connect
+// requests, which makes the call act on a restaurant's connected account.
 type Client struct {
 	SecretKey string
+	Account   string
 	HTTP      *http.Client
 	BaseURL   string
 }
 
 func NewClient(secretKey string) *Client {
 	return &Client{SecretKey: secretKey, HTTP: &http.Client{Timeout: 20 * time.Second}, BaseURL: apiBase}
+}
+
+// NewConnectClient returns a client that sends Stripe-Account for direct charges.
+func NewConnectClient(secretKey, accountID string) *Client {
+	c := NewClient(secretKey)
+	c.Account = accountID
+	return c
 }
 
 // CheckoutInput describes a direct charge for one order.
@@ -67,7 +80,6 @@ func (c *Client) CreateCheckoutSession(ctx context.Context, in CheckoutInput) (C
 	form.Set("metadata[merchant_id]", in.MerchantID)
 	form.Set("payment_intent_data[metadata][order_id]", in.OrderID)
 	form.Set("payment_intent_data[metadata][merchant_id]", in.MerchantID)
-	form.Set("payment_method_types[0]", "card")
 	if in.CustomerMail != "" {
 		form.Set("customer_email", in.CustomerMail)
 	}
@@ -82,7 +94,13 @@ func (c *Client) CreateCheckoutSession(ctx context.Context, in CheckoutInput) (C
 	}
 	req.Header.Set("Authorization", "Bearer "+c.SecretKey)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Stripe-Version", "2024-06-20")
+	req.Header.Set("Stripe-Version", apiVersion)
+	if c.Account != "" {
+		req.Header.Set("Stripe-Account", c.Account)
+	}
+	if in.OrderID != "" {
+		req.Header.Set("Idempotency-Key", "checkout_"+in.OrderID)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return CheckoutSession{}, fmt.Errorf("%w: %v", ErrProvider, err)
@@ -108,9 +126,10 @@ func (c *Client) CreateCheckoutSession(ctx context.Context, in CheckoutInput) (C
 
 // Event is the webhook payload subset used for settlement.
 type Event struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-	Data struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Account string `json:"account"`
+	Data    struct {
 		Object struct {
 			ID                string            `json:"id"`
 			PaymentStatus     string            `json:"payment_status"`

@@ -148,4 +148,23 @@ func (s *Store) ResolveMerchantByHost(ctx context.Context, host string) (Merchan
 	return m, nil
 }
 
+type PaymentAccountRoute struct {
+	MerchantRoute
+	Status string
+}
+
+// ResolveMerchantByPaymentAccount maps a Stripe connected account to its
+// merchant for platform-level webhook processing. Like ResolveMerchantByHost,
+// the database function is SECURITY DEFINER and exposes routing data only.
+func (s *Store) ResolveMerchantByPaymentAccount(ctx context.Context, accountID string) (PaymentAccountRoute, error) {
+	var m PaymentAccountRoute
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, slug, name, status FROM resolve_merchant_by_payment_account($1)`, accountID).
+		Scan(&m.ID, &m.Slug, &m.Name, &m.Status)
+	if err != nil {
+		return PaymentAccountRoute{}, Normalize(err)
+	}
+	return m, nil
+}
+
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }

@@ -40,3 +40,24 @@ func TestPageUsesCSRFTokenFromContext(t *testing.T) {
 func contextWithCSRF(r *http.Request, token string) context.Context {
 	return context.WithValue(r.Context(), csrfContextKey{}, token)
 }
+
+func TestCustomerCookieDomain(t *testing.T) {
+	s := &Server{cfg: &config.Config{BaseDomain: "tablekit.de"}}
+	tests := []struct {
+		host string
+		want string
+	}{
+		{"bamberg-test.tablekit.de", ".tablekit.de"},
+		{"bamberg-test.tablekit.de:8080", ".tablekit.de"},
+		{"TABLEKIT.DE", ".tablekit.de"},
+		{"tablekit.de", ".tablekit.de"},
+		{"bamberg-test.tk.local", ""},
+		{"evil-tablekit.de", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := s.customerCookieDomain(tt.host); got != tt.want {
+			t.Errorf("customerCookieDomain(%q) = %q, want %q", tt.host, got, tt.want)
+		}
+	}
+}

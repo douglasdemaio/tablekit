@@ -38,3 +38,15 @@ func TestVerifyWebhook(t *testing.T) {
 		t.Fatal("missing v1 must fail")
 	}
 }
+
+func TestVerifyConnectWebhookAccount(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	payload := []byte(`{"id":"evt_1","type":"checkout.session.completed","account":"acct_1","data":{"object":{"id":"cs_1","payment_status":"paid"}}}`)
+	ev, err := VerifyWebhook(payload, sign(payload, "whsec_test", now.Unix()), "whsec_test", now)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if ev.Account != "acct_1" {
+		t.Fatalf("account = %q", ev.Account)
+	}
+}

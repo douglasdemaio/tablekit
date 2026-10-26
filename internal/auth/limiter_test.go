@@ -37,3 +37,13 @@ func TestLimiterIsKeyed(t *testing.T) {
 		t.Fatal("a should now be blocked")
 	}
 }
+
+func TestLimiterDisabledAllowsEverything(t *testing.T) {
+	l := NewLimiter()
+	l.Disabled = true
+	for i := 0; i < 50; i++ {
+		if !l.Allow("key", 1, time.Minute) {
+			t.Fatal("disabled limiter should allow every request")
+		}
+	}
+}

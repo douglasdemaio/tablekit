@@ -67,10 +67,13 @@ func New(cfg *config.Config, log *slog.Logger, store *db.Store, sealer *crypto.S
 		staffSvc:      staff.NewService(store),
 		mediaSvc:      media.NewService(store, storage.New(cfg)),
 		storefrontSvc: storefront.NewService(store),
-		customerSvc:   customer.NewService(store, mailer, log, cfg.CustomerSessionTTL),
+		customerSvc:   customer.NewService(store, mailer, log, cfg.CustomerSessionTTL, cfg.RateLimitDisabled),
 	}
 	if !cfg.StorageEnabled() {
 		log.Warn("media storage not configured; image uploads are disabled")
+	}
+	if !cfg.StripeEnabled() {
+		log.Warn("Stripe Connect not configured; card payments are disabled")
 	}
 	s.handler = s.chain(s.routes())
 	return s, nil
@@ -104,13 +107,13 @@ func (s *Server) routes() http.Handler {
 	}
 
 	r.Get("/", s.handleLanding)
+	r.Post("/webhooks/stripe", s.handleStripeWebhook)
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireMerchant)
 		r.Get("/checkout", s.handleCheckoutPage)
 		r.Post("/orders", s.handlePlaceOrder)
 		r.Get("/orders/{ref}", s.handleOrderConfirmation)
-		r.Post("/webhooks/stripe", s.handleStripeWebhook)
 
 		r.Get("/theme.css", s.handleThemeCSS)
 
@@ -173,7 +176,9 @@ func (s *Server) routes() http.Handler {
 		r.With(s.requirePermission(auth.PermBranding)).Post("/dashboard/settings/branding", s.handleSettingsBranding)
 		r.With(s.requirePermission(auth.PermBranding)).Post("/dashboard/settings/branding/logo", s.handleSettingsLogo)
 		r.With(s.requirePermission(auth.PermBranding)).Post("/dashboard/settings/branding/cover", s.handleSettingsCover)
-		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/payments", s.handleSettingsPayments)
+		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/payments/connect", s.handleStripeConnectStart)
+		r.With(s.requirePermission(auth.PermSettings)).Get("/dashboard/settings/payments/return", s.handleStripeConnectReturn)
+		r.With(s.requirePermission(auth.PermSettings)).Get("/dashboard/settings/payments/refresh", s.handleStripeConnectRefresh)
 		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/vat", s.handleSettingsVAT)
 		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/hours", s.handleSettingsHours)
 		r.With(s.requirePermission(auth.PermSettings)).Post("/dashboard/settings/zones", s.handleSettingsZoneCreate)

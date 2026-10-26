@@ -172,22 +172,20 @@ func (q *Queries) GetMerchantFull(ctx context.Context, dollar_1 uuid.UUID) (GetM
 }
 
 const getPaymentConnection = `-- name: GetPaymentConnection :one
-SELECT id, merchant_id, provider, status, publishable_key, secret_key_enc,
-       webhook_secret_enc, livemode
+SELECT id, merchant_id, provider, connected_account_id, status, capabilities, livemode
 FROM payment_connections
 WHERE merchant_id = $1::uuid
   AND provider = 'stripe'
 `
 
 type GetPaymentConnectionRow struct {
-	ID               uuid.UUID
-	MerchantID       uuid.UUID
-	Provider         string
-	Status           string
-	PublishableKey   *string
-	SecretKeyEnc     []byte
-	WebhookSecretEnc []byte
-	Livemode         bool
+	ID                 uuid.UUID
+	MerchantID         uuid.UUID
+	Provider           string
+	ConnectedAccountID *string
+	Status             string
+	Capabilities       json.RawMessage
+	Livemode           bool
 }
 
 func (q *Queries) GetPaymentConnection(ctx context.Context, dollar_1 uuid.UUID) (GetPaymentConnectionRow, error) {
@@ -197,10 +195,9 @@ func (q *Queries) GetPaymentConnection(ctx context.Context, dollar_1 uuid.UUID) 
 		&i.ID,
 		&i.MerchantID,
 		&i.Provider,
+		&i.ConnectedAccountID,
 		&i.Status,
-		&i.PublishableKey,
-		&i.SecretKeyEnc,
-		&i.WebhookSecretEnc,
+		&i.Capabilities,
 		&i.Livemode,
 	)
 	return i, err
@@ -523,37 +520,33 @@ func (q *Queries) UpdateMerchantProfile(ctx context.Context, arg UpdateMerchantP
 
 const upsertPaymentConnection = `-- name: UpsertPaymentConnection :exec
 INSERT INTO payment_connections (
-    merchant_id, provider, status, publishable_key, secret_key_enc,
-    webhook_secret_enc, livemode
+    merchant_id, provider, connected_account_id, status, capabilities, livemode
 ) VALUES (
-    $1, 'stripe', $2, $3,
-    $4, $5, $6
+    $1, 'stripe', $2::text,
+    $3, $4::jsonb, $5
 )
 ON CONFLICT (merchant_id, provider) DO UPDATE SET
+    connected_account_id = EXCLUDED.connected_account_id,
     status = EXCLUDED.status,
-    publishable_key = EXCLUDED.publishable_key,
-    secret_key_enc = EXCLUDED.secret_key_enc,
-    webhook_secret_enc = EXCLUDED.webhook_secret_enc,
+    capabilities = EXCLUDED.capabilities,
     livemode = EXCLUDED.livemode,
     updated_at = now()
 `
 
 type UpsertPaymentConnectionParams struct {
-	MerchantID       uuid.UUID
-	Status           string
-	PublishableKey   *string
-	SecretKeyEnc     []byte
-	WebhookSecretEnc []byte
-	Livemode         bool
+	MerchantID         uuid.UUID
+	ConnectedAccountID string
+	Status             string
+	Capabilities       json.RawMessage
+	Livemode           bool
 }
 
 func (q *Queries) UpsertPaymentConnection(ctx context.Context, arg UpsertPaymentConnectionParams) error {
 	_, err := q.db.Exec(ctx, upsertPaymentConnection,
 		arg.MerchantID,
+		arg.ConnectedAccountID,
 		arg.Status,
-		arg.PublishableKey,
-		arg.SecretKeyEnc,
-		arg.WebhookSecretEnc,
+		arg.Capabilities,
 		arg.Livemode,
 	)
 	return err

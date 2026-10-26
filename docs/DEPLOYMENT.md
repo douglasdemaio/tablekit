@@ -16,7 +16,8 @@ This is a concrete checklist for self-hosting tablekit. Follow in order; anythin
 - [REQUIRED] Set `TABLEKIT_ENV=production`, `TABLEKIT_PUBLIC_SCHEME=https`, `TABLEKIT_COOKIE_SECURE=true`, `TABLEKIT_TRUST_PROXY=true` (only if behind a trusted proxy).
 - [REQUIRED] Configure WebAuthn: `TABLEKIT_WEBAUTHN_RP_ID=<your-domain>`, `TABLEKIT_WEBAUTHN_ORIGINS=https://<your-domain>` (and tenant origins as needed).
 - [REQUIRED] SMTP configured (see `internal/email`) or document that codes are logged (dev only).
-- [REQUIRED] Stripe (if enabling card payments): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (per merchant or platform config as implemented). Webhooks must go to `POST /webhooks/stripe` over HTTPS and signature verification must remain enforced.
+- [REQUIRED] Stripe Connect (if enabling card payments): set the platform `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. Restaurants onboard their own connected accounts; tablekit stores only the non-secret `acct_...` ID and capability status.
+- [REQUIRED] In Stripe, add the Connect webhook endpoint `https://<base-domain>/webhooks/stripe` and subscribe to connected-account checkout events. Keep signature verification enforced. For local testing: `stripe listen --forward-connect-to http://localhost:8080/webhooks/stripe`.
 
 ## 3) Database
 - [REQUIRED] Run migrations with the owner role: `tablekit-migrate up` (or `make migrate-up`).
@@ -43,7 +44,7 @@ This is a concrete checklist for self-hosting tablekit. Follow in order; anythin
 - [REQUIRED] Tenant resolution works for `*.{BASE_DOMAIN}` and apex is reserved.
 - [REQUIRED] Staff login + MFA setup works; customer OTP login works (email delivered).
 - [REQUIRED] Place cash order end-to-end (menu → cart → checkout → confirmation).
-- [REQUIRED] Place card order in test mode → webhook marks `paid` → idempotent on replay.
+- [REQUIRED] Complete Stripe Connect onboarding for a test restaurant, then place a card order → webhook marks `paid` → idempotent on replay.
 - [REQUIRED] Delivery/pickup handoff codes verified; orders transition correctly.
 - [REQUIRED] RLS isolation verified; no card data stored.
 - [REQUIRED] Backups/restores tested; rollback plan documented.

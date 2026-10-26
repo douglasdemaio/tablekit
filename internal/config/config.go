@@ -47,6 +47,12 @@ type Config struct {
 	BillingEnabled bool
 	TrustProxy     bool
 
+	StripeSecretKey     string
+	StripeWebhookSecret string
+	StripeLiveMode      bool
+
+	RateLimitDisabled bool
+
 	AppDBUser     string
 	AppDBPassword string
 	DBName        string
@@ -66,6 +72,11 @@ type StorageConfig struct {
 }
 
 func (c *Config) IsProduction() bool { return c.Env == EnvProduction }
+
+// StripeEnabled reports whether platform-level Connect payments are configured.
+func (c *Config) StripeEnabled() bool {
+	return c.StripeSecretKey != "" && c.StripeWebhookSecret != ""
+}
 
 // StorageEnabled reports whether an S3-compatible object store is configured.
 func (c *Config) StorageEnabled() bool {
@@ -151,6 +162,13 @@ func Load() (*Config, error) {
 	c.CookieSecure = boolEnv("TABLEKIT_COOKIE_SECURE", c.IsProduction())
 	c.BillingEnabled = boolEnv("TABLEKIT_BILLING_ENABLED", false)
 	c.TrustProxy = boolEnv("TABLEKIT_TRUST_PROXY", false)
+	c.StripeSecretKey = strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY"))
+	c.StripeWebhookSecret = strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET"))
+	c.StripeLiveMode = strings.HasPrefix(c.StripeSecretKey, "sk_live_") || strings.HasPrefix(c.StripeSecretKey, "rk_live_")
+	c.RateLimitDisabled = boolEnv("TABLEKIT_RATE_LIMIT_DISABLED", false)
+	if c.RateLimitDisabled && c.IsProduction() {
+		return nil, errors.New("TABLEKIT_RATE_LIMIT_DISABLED is not allowed in production")
+	}
 
 	rawKey := strings.TrimSpace(os.Getenv("TABLEKIT_ENCRYPTION_KEY"))
 	if rawKey == "" {

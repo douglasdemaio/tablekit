@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"tablekit.de/tablekit/internal/auth"
 	"tablekit.de/tablekit/internal/db/sqlcgen"
 	"tablekit.de/tablekit/internal/media"
+	"tablekit.de/tablekit/internal/payments"
 	"tablekit.de/tablekit/internal/storefront"
 	"tablekit.de/tablekit/web/templates"
 )
@@ -55,7 +57,10 @@ func (s *Server) loadSettingsExtras(w http.ResponseWriter, r *http.Request) (tem
 	v.Brand.LogoURL = s.assetURL(r, id.Merchant.ID, brand.LogoAssetID)
 	v.Brand.CoverURL = s.assetURL(r, id.Merchant.ID, brand.CoverAssetID)
 	v.Payment = templates.PaymentSettingsView{
-		Configured: payment.Status == "active", PublishableKey: payment.PublishableKey, LiveMode: payment.LiveMode,
+		Available: s.cfg.StripeEnabled(),
+		Connected: payment.ConnectedAccountID != "",
+		Active:    payment.Status == "active",
+		LiveMode:  payment.LiveMode || s.cfg.StripeLiveMode,
 	}
 	v.CanBrand = id.Can(auth.PermBranding)
 	return v, true
@@ -226,62 +231,130 @@ func (s *Server) handleBrandUpload(w http.ResponseWriter, r *http.Request, kind 
 	http.Redirect(w, r, "/dashboard/settings?saved=branding", http.StatusSeeOther)
 }
 
-func (s *Server) handleSettingsPayments(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleStripeConnectStart(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.FromContext(r.Context())
-	if err := r.ParseForm(); err != nil {
+	if !s.cfg.StripeEnabled() {
 		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
 		return
 	}
-	current, err := s.storefrontSvc.PaymentConnection(r.Context(), id.Merchant.ID)
+	pc, err := s.storefrontSvc.PaymentConnection(r.Context(), id.Merchant.ID)
 	if err != nil {
+		s.log.Error("load payment connection", "error", err)
 		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
 		return
 	}
-	publishable := strings.TrimSpace(r.PostFormValue("publishable_key"))
-	secret := strings.TrimSpace(r.PostFormValue("secret_key"))
-	webhook := strings.TrimSpace(r.PostFormValue("webhook_secret"))
-	secretEnc, webhookEnc := current.SecretKeyEnc, current.WebhookSecretEnc
-	live := current.LiveMode
-	if !strings.HasPrefix(publishable, "pk_") || len(publishable) > 200 {
+	profile, err := s.storefrontSvc.MerchantProfile(r.Context(), id.Merchant.ID)
+	if err != nil {
+		s.log.Error("load merchant profile for stripe", "error", err)
 		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
 		return
 	}
-	if secret != "" {
-		if !strings.HasPrefix(secret, "sk_") || len(secret) > 200 {
-			http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
-			return
-		}
-		sealed, err := s.sealer.Seal([]byte(secret))
-		if err != nil {
-			http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
-			return
-		}
-		secretEnc = sealed
-		live = strings.HasPrefix(secret, "sk_live_")
+	client := payments.NewClient(s.cfg.StripeSecretKey)
+	accountID := pc.ConnectedAccountID
+	if accountID != "" && pc.LiveMode != s.cfg.StripeLiveMode {
+		accountID = ""
 	}
-	if webhook != "" {
-		if !strings.HasPrefix(webhook, "whsec_") || len(webhook) > 200 {
+	if accountID == "" {
+		if len(strings.TrimSpace(profile.Country)) != 2 {
+			http.Redirect(w, r, "/dashboard/settings?error=payments_country", http.StatusSeeOther)
+			return
+		}
+		contact := strings.TrimSpace(profile.Email)
+		if contact == "" {
+			contact = strings.TrimSpace(id.Staff.Email)
+		}
+		account, createErr := client.CreateConnectAccount(r.Context(), payments.ConnectAccountInput{
+			ContactEmail: contact,
+			DisplayName:  profile.Name,
+			Country:      profile.Country,
+		})
+		if createErr != nil {
+			s.log.Error("create stripe connected account", "error", createErr)
 			http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
 			return
 		}
-		sealed, err := s.sealer.Seal([]byte(webhook))
-		if err != nil {
+		accountID = account.ID
+		caps, _ := json.Marshal(map[string]string{"card_payments": account.CardPaymentsStatus})
+		if err := s.storefrontSvc.SaveConnectedAccount(r.Context(), id.Merchant.ID, accountID, account.Status(), caps, s.cfg.StripeLiveMode); err != nil {
+			s.log.Error("save stripe connected account", "error", err)
 			http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
 			return
 		}
-		webhookEnc = sealed
 	}
-	if secretEnc == nil || webhookEnc == nil {
+	link, err := s.stripeOnboardingLink(r, client, accountID)
+	if err != nil {
+		s.log.Error("create stripe onboarding link", "error", err)
 		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
 		return
 	}
-	if err := s.storefrontSvc.SavePaymentConnection(r.Context(), id.Merchant.ID, publishable, secretEnc, webhookEnc, live); err != nil {
-		s.log.Error("save payment connection", "error", err)
+	s.audit(r, id.Merchant.ID, "staff", &id.Staff.ID, "settings.stripe_onboarding_started", "merchant", id.Merchant.ID.String(), s.clientIP(r), nil)
+	http.Redirect(w, r, link, http.StatusSeeOther)
+}
+
+func (s *Server) stripeOnboardingLink(r *http.Request, client *payments.Client, accountID string) (string, error) {
+	base := fmt.Sprintf("%s://%s", s.cfg.PublicScheme, r.Host)
+	return client.CreateAccountLink(r.Context(), accountID,
+		base+"/dashboard/settings/payments/return",
+		base+"/dashboard/settings/payments/refresh")
+}
+
+func (s *Server) syncStripeAccount(w http.ResponseWriter, r *http.Request) (*payments.ConnectAccount, bool) {
+	id, _ := auth.FromContext(r.Context())
+	pc, err := s.storefrontSvc.PaymentConnection(r.Context(), id.Merchant.ID)
+	if err != nil || pc.ConnectedAccountID == "" || pc.LiveMode != s.cfg.StripeLiveMode {
+		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
+		return nil, false
+	}
+	account, err := payments.NewClient(s.cfg.StripeSecretKey).GetConnectAccount(r.Context(), pc.ConnectedAccountID)
+	if err != nil {
+		s.log.Error("refresh stripe connected account", "error", err)
+		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
+		return nil, false
+	}
+	caps, _ := json.Marshal(map[string]string{"card_payments": account.CardPaymentsStatus})
+	if err := s.storefrontSvc.SaveConnectedAccount(r.Context(), id.Merchant.ID, account.ID, account.Status(), caps, account.LiveMode); err != nil {
+		s.log.Error("save stripe account status", "error", err)
+		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
+		return nil, false
+	}
+	return &account, true
+}
+
+func (s *Server) handleStripeConnectReturn(w http.ResponseWriter, r *http.Request) {
+	id, _ := auth.FromContext(r.Context())
+	if !s.cfg.StripeEnabled() {
 		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
 		return
 	}
-	s.audit(r, id.Merchant.ID, "staff", &id.Staff.ID, "settings.payments_updated", "merchant", id.Merchant.ID.String(), s.clientIP(r), nil)
+	if _, ok := s.syncStripeAccount(w, r); !ok {
+		return
+	}
+	s.audit(r, id.Merchant.ID, "staff", &id.Staff.ID, "settings.stripe_onboarding_refreshed", "merchant", id.Merchant.ID.String(), s.clientIP(r), nil)
 	http.Redirect(w, r, "/dashboard/settings?saved=payments", http.StatusSeeOther)
+}
+
+func (s *Server) handleStripeConnectRefresh(w http.ResponseWriter, r *http.Request) {
+	id, _ := auth.FromContext(r.Context())
+	if !s.cfg.StripeEnabled() {
+		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
+		return
+	}
+	account, ok := s.syncStripeAccount(w, r)
+	if !ok {
+		return
+	}
+	if account.Status() == "active" {
+		http.Redirect(w, r, "/dashboard/settings?saved=payments", http.StatusSeeOther)
+		return
+	}
+	link, err := s.stripeOnboardingLink(r, payments.NewClient(s.cfg.StripeSecretKey), account.ID)
+	if err != nil {
+		s.log.Error("recreate stripe onboarding link", "error", err)
+		http.Redirect(w, r, "/dashboard/settings?error=payments", http.StatusSeeOther)
+		return
+	}
+	s.audit(r, id.Merchant.ID, "staff", &id.Staff.ID, "settings.stripe_onboarding_restarted", "merchant", id.Merchant.ID.String(), s.clientIP(r), nil)
+	http.Redirect(w, r, link, http.StatusSeeOther)
 }
 
 func (s *Server) handleThemeCSS(w http.ResponseWriter, r *http.Request) {

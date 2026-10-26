@@ -15,8 +15,7 @@ SELECT m.id, m.name, m.slug, m.currency, m.timezone, m.vat_rate_bp,
        EXISTS (
            SELECT 1 FROM payment_connections pc
            WHERE pc.merchant_id = m.id AND pc.provider = 'stripe'
-             AND pc.status = 'active' AND pc.secret_key_enc IS NOT NULL
-             AND pc.webhook_secret_enc IS NOT NULL
+             AND pc.status = 'active' AND pc.connected_account_id IS NOT NULL
        ) AS card_enabled
 FROM merchants m
 LEFT JOIN brand_settings bs ON bs.merchant_id = m.id
